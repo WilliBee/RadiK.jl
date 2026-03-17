@@ -3,6 +3,8 @@
 # ==============================================================================
 # Based on radik/radik/RadixSelect/utils.cuh
 
+import KernelAbstractions.Extras: @unroll
+
 
 @inline _compute_hist_len(::Type{T}, RIGHT) where {T} = 1 << (8 * sizeof(T) - RIGHT)
 
@@ -74,4 +76,29 @@ end
 # Vectorized version (Julia handles this automatically via broadcasting!)
 @inline function apply_scaling(vals::NTuple{N, T}, scaler::T, ::Val{WITHSCALE}, ::Val{LARGEST}) where {N, T<:AbstractFloat, WITHSCALE, LARGEST}
     return ntuple(i -> apply_scaling(vals[i], scaler, Val(WITHSCALE), Val(LARGEST)), Val(N))
+end
+
+# ==============================================================================
+# Prefix sum
+# ==============================================================================
+
+import KernelIntrinsics: Up, Down
+
+macro warpreduce(val, lane, op=:+, dir=:Up, ws=32, mask=0xffffffff)
+    condition = if dir == :Up
+        :($(esc(lane)) > offset)
+    elseif dir == :Down
+        :($(esc(lane)) + offset ≤ $(esc(ws)))
+    end
+
+    quote
+        local offset = 1
+        while offset < $(esc(ws))
+            shuffled = @shfl($(esc(dir)), $(esc(val)), offset, $(esc(mask)))
+            if $condition
+                $(esc(val)) = $(esc(op))(shuffled, $(esc(val)))
+            end
+            offset <<= 1
+        end
+    end
 end
