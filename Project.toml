@@ -1,0 +1,43 @@
+name = "RadiK"
+uuid = "c173e4ef-a5d8-447f-8df0-20ebc266f2f3"
+version = "0.1.0"
+authors = ["William BENG <github.com/WilliBee> and contributors"]
+
+[workspace]
+projects = ["benchmarks"]
+
+[deps]
+AcceleratedKernels = "6a4ca0a5-0e36-4168-a932-d9be78d558f1"
+Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
+Atomix = "a9b6321e-bd34-4604-b9c9-b65b8de01458"
+BitonicSort = "046256cb-d774-41de-a243-db2e1ebe8eb7"
+KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
+KernelIntrinsics = "f9588fbb-d238-4998-b15a-468e8766d49a"
+
+[weakdeps]
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+Metal = "dde4c033-4e86-420c-a63e-0dd931031962"
+
+[sources]
+KernelIntrinsics = {url = "https://github.com/WilliBee/KernelIntrinsics.jl.git"}
+BitonicSort = {url = "https://github.com/WilliBee/BitonicSort.jl.git"}
+
+[compat]
+Adapt = "4.4.0"
+Atomix = "1.1.2"
+BitonicSort = "0.1.0"
+CUDA = "5.9.6"
+KernelIntrinsics = "0.1.5"
+PrettyTables = "3.2.3"
+Printf = "1.11.0"
+Random = "1.11.0"
+julia = "1.10"
+
+[extras]
+PrettyTables = "08abe8d2-0d0c-5749-adfa-8a2ac140af0d"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["CUDA", "Metal", "PrettyTables", "Printf", "Random", "Test"]
