@@ -8,26 +8,26 @@ using KernelIntrinsics: get_warpsize, device
 const MAX_GRID_SIZE = 65535
 
 """
-    RadiKWorkspace(backend, k, task_num, task_lens, ValT=Float32)
+    RadiKWorkspace(backend, n, num_tasks, [T=Int], [ValT=Float32])
 
 Temporary workspace buffers for radix-based top-k selection.
 
-Allows memory reuse across multiple calls by allocating once and passing to
-`topk_radix_select!` via the `workspace` kwarg.
+Pre-allocates with a fixed stride `n` to allow memory reuse across multiple calls
+with varying task lengths. Follows the C++ approach: allocate once with maximum
+expected stride, then reuse for any call with `max(task_lens) ≤ n`.
 
 # Arguments
 - `backend`: KernelAbstractions backend (CUDABackend, MetalBackend, etc.)
-- `k`: Number of top elements to select
-- `task_num`: Number of tasks (1 for single-task, >1 for multi-task batch)
-- `task_lens`: Task lengths for each task (Vector{<:Integer} of length task_num)
+- `n`: Maximum stride (longest task length this workspace can handle)
+- `num_tasks`: Number of tasks (1 for single-task, >1 for multi-task batch)
+- `T`: (Optional) Index type for buffers (default: Int)
 - `ValT`: (Optional) Value type for buffers (default: Float32)
 
 # Fields
 - `histogram`: Histogram buffer (4096 bins × num_tasks)
-- `val_buffer_1`: First ping-pong value buffer (num_tasks × stride)
-- `val_buffer_2`: Second ping-pong value buffer (num_tasks × stride)
+- `val_buffer_1`: First ping-pong value buffer (n × num_tasks)
+- `val_buffer_2`: Second ping-pong value buffer (n × num_tasks)
 - `global_count`: Per-task global counters
-- `task_offsets`: Task boundary offsets for prefix sum
 - `task_len_buffer_1`: First ping-pong task lengths buffer
 - `task_len_buffer_2`: Second ping-pong task lengths buffer
 - `k_values`: K values per task
@@ -35,52 +35,47 @@ Allows memory reuse across multiple calls by allocating once and passing to
 
 # Example
 ```
-# Single-task with Float32
-ws = RadiKWorkspace(CUDABackend(), 100, 1, [10000])
+# Allocate workspace for maximum expected task length of 10000
+ws = RadiKWorkspace(CUDABackend(), 10000, 4)
 
-# Single-task with Float16
-ws = RadiKWorkspace(CUDABackend(), 100, 1, [10000], Float16)
+# Can reuse for any calls with max(task_lens) ≤ 10000
+topk_radix_select!(data1, out1, 100; task_lens=[5000, 6000, 4000, 5500], workspace=ws)
+topk_radix_select!(data2, out2, 100; task_lens=[2500, 3000, 2000, 2500], workspace=ws)
 
-# Multi-task (4 tasks)
-task_lens = [2500, 3000, 2000, 2500]
-ws = RadiKWorkspace(CUDABackend(), 100, 4, task_lens)
-
-# Reuse for multiple calls
-topk_radix_select!(data1, out1, 100, ws)
-topk_radix_select!(data2, out2, 100, ws)
+# Works with single-task too
+ws = RadiKWorkspace(CUDABackend(), 10000, 1)
+topk_radix_select!(data, result, 100; workspace=ws)
 ```
+
+# Notes
+- Value buffers are sized for `n` elements per task, not the actual task lengths
+- This allows reuse across calls with different task lengths (as long as max ≤ n)
+- For multi-task processing, `num_tasks` must match the number of tasks in each call
 """
-mutable struct RadiKWorkspace{I, V}
+struct RadiKWorkspace{I, V}
     histogram::AbstractArray{I, 2}
     val_buffer_1::AbstractArray{V, 2}
     val_buffer_2::AbstractArray{V, 2}
     global_count::AbstractArray{I}
-    task_offsets::AbstractArray{I}
     task_len_buffer_1::AbstractArray{I}
     task_len_buffer_2::AbstractArray{I}
     k_values::AbstractArray{I}
     bin_ids::AbstractArray{I}
-    num_tasks::I
-    stride::I
 end
 
-function RadiKWorkspace(backend, k::T, num_tasks::T, task_lens::AbstractVector{T}, ::Type{ValT}=Float32) where {T, ValT}
-    stride = max(task_lens..., length(task_lens))
-
-    histogram = KA.zeros(backend, T, 4096, Int(num_tasks))
-    val_buffer_1 = KA.zeros(backend, ValT, stride, Int(num_tasks))
-    val_buffer_2 = KA.zeros(backend, ValT, stride, Int(num_tasks))
-    global_count = KA.zeros(backend, T, Int(num_tasks))
-
-    task_offsets = adapt(backend, vcat(zero(T), accumulate(+, task_lens)))
-    task_len_buffer_1 = adapt(backend, task_lens)
-    task_len_buffer_2 = KA.zeros(backend, T, Int(num_tasks))
-    k_values = adapt(backend, fill(k, Int(num_tasks)))
-    bin_ids = KA.zeros(backend, T, Int(num_tasks))
+function RadiKWorkspace(backend, n, num_tasks, ::Type{T}=Int, ::Type{ValT}=Float32) where {T, ValT}
+    histogram = KA.zeros(backend, T, 4096, num_tasks)
+    val_buffer_1 = KA.zeros(backend, ValT, n, num_tasks)
+    val_buffer_2 = KA.zeros(backend, ValT, n, num_tasks)
+    global_count = KA.zeros(backend, T, num_tasks)
+    task_len_buffer_1 = KA.zeros(backend, T, num_tasks)
+    task_len_buffer_2 = KA.zeros(backend, T, num_tasks)
+    k_values = KA.zeros(backend, T, num_tasks)
+    bin_ids = KA.zeros(backend, T, num_tasks)
 
     return RadiKWorkspace(
-        histogram, val_buffer_1, val_buffer_2, global_count, task_offsets,
-        task_len_buffer_1, task_len_buffer_2, k_values, bin_ids, num_tasks, T(stride)
+        histogram, val_buffer_1, val_buffer_2, global_count,
+        task_len_buffer_1, task_len_buffer_2, k_values, bin_ids
     )
 end
 
@@ -117,13 +112,27 @@ result = CUDA.zeros(Float32, 100)
 topk_radix_select!(data, result, 100; largest=true)
 
 # Multiple calls with workspace reuse (avoid allocation overhead)
-ws = RadiKWorkspace(CUDABackend(), 10000, 100)
+# Allocate for maximum expected stride
+ws = RadiKWorkspace(CUDABackend(), 10000, 1)
+
+# Reuse for any data with length ≤ 10000
 for i in 1:100
     data = CUDA.randn(Float32, 10000)
     result = CUDA.zeros(Float32, 100)
     topk_radix_select!(data, result, 100; workspace=ws)
 end
+
+# Multi-task processing with workspace reuse
+ws = RadiKWorkspace(CUDABackend(), 10000, 4)  # max stride=10000, 4 tasks
+topk_radix_select!(data, result, 100; task_lens=[5000, 6000, 4000, 5500], workspace=ws)
+topk_radix_select!(data2, result2, 100; task_lens=[2500, 3000, 2000, 2500], workspace=ws)
 ```
+
+# Workspace Reuse
+When reusing a workspace across calls:
+- Workspace `num_tasks` must match the number of tasks in each call
+- Workspace stride `n` must be ≥ `max(task_lens)` for each call
+- Different `k` values are allowed across calls
 """
 function topk_radix_select!(
     val_in::AbstractArray{ValT},
@@ -151,20 +160,25 @@ function topk_radix_select!(
     end
 
     # ========================================================================
+    # Buffer reset
+    # ========================================================================
+    ws.k_values .= k
+
+    # ========================================================================
     # Workspace setup
     # ========================================================================
     histogram = ws.histogram
     val_buffer_1 = ws.val_buffer_1
     val_buffer_2 = ws.val_buffer_2
     global_count = ws.global_count
-    task_offsets = ws.task_offsets
     task_len_buffer_1 = ws.task_len_buffer_1
     task_len_buffer_2 = ws.task_len_buffer_2
     k_values = ws.k_values
     bin_ids = ws.bin_ids
-    stride = ws.stride
 
     num_tasks = length(task_lens)
+    stride = T(max(task_lens..., length(task_lens)))
+    task_offsets = adapt(backend, vcat(zero(T), accumulate(+, task_lens)))
 
     # Ping-pong flag: tracks which buffer was last written to (1 = val_buffer_2, 0 = val_buffer_1)
     flag = 1
@@ -339,18 +353,18 @@ Allocates the result array, indices array, and workspace, then calls `topk_radix
 - `result`: Array containing top-k elements (sorted)
 - `indices`: Array containing indices of top-k elements
 """
-function topk(data::AbstractArray{ValT}, k::Int32; largest=true, rev=false) where {ValT}
+function topk(data::AbstractArray{ValT}, k, ::Type{IxT}=Int32; largest=true, rev=false) where {ValT, IxT}
     backend = get_backend(data)
     n = length(data)
 
-    # Allocate workspace
-    ws = RadiKWorkspace(backend, Int32(k), Int32(1), Int32[n], ValT)
+    # Allocate workspace (n is the data length, which is the stride for single-task)
+    ws = RadiKWorkspace(backend, n, 1, IxT, ValT)
 
     # Allocate output
-    result = KA.zeros(backend, ValT, Int(k))
-    indices = KA.zeros(backend, Int32, Int(k))
+    result = KA.zeros(backend, ValT, k)
+    indices = KA.zeros(backend, IxT, k)
 
     # Call main algorithm
-    topk_radix_select!(data, result, k, ws, indices, indices, Int32[n], Val(largest), Val(!rev), Val(false), Val(false), Val(true))
+    topk_radix_select!(data, result, IxT(k), ws, indices, indices, IxT[n], Val(largest), Val(!rev), Val(false), Val(false), Val(true))
     return result, indices
 end
