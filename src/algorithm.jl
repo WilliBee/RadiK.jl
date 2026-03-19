@@ -39,12 +39,12 @@ expected stride, then reuse for any call with `max(task_lens) ≤ n`.
 ws = RadiKWorkspace(CUDABackend(), 10000, 4)
 
 # Can reuse for any calls with max(task_lens) ≤ 10000
-topk_radix_select!(data1, out1, 100; task_lens=[5000, 6000, 4000, 5500], workspace=ws)
-topk_radix_select!(data2, out2, 100; task_lens=[2500, 3000, 2000, 2500], workspace=ws)
+topk_radix_select!(data1, out1, Int32(100), ws, idx1_in, idx1_out, Int32[5000, 6000, 4000, 5500])
+topk_radix_select!(data2, out2, Int32(100), ws, idx2_in, idx2_out, Int32[2500, 3000, 2000, 2500])
 
 # Works with single-task too
 ws = RadiKWorkspace(CUDABackend(), 10000, 1)
-topk_radix_select!(data, result, 100; workspace=ws)
+topk_radix_select!(data, result, Int32(100), ws, idx_in, idx_out, Int32[10000])
 ```
 
 # Notes
@@ -94,38 +94,44 @@ Main entry point for radix-based top-k selection.
 # Arguments
 - `val_in`: Input data array (AbstractArray{Float32})
 - `val_out`: Output array for top-k results
-- `k`: Number of top elements to select
-- `idx_in`: (Optional) Input indices array
-- `idx_out`: (Optional) Output array for indices
-- `task_lens`: (Optional) Task lengths for multi-task batch processing
-- `workspace`: (Optional) Pre-allocated RadiKWorkspace for memory reuse
+- `k`: Number of top elements to select (Int32)
+- `ws`: Pre-allocated RadiKWorkspace for memory reuse
+- `idx_in`: Input indices array (for index tracking)
+- `idx_out`: Output array for indices
+- `task_lens`: Task lengths for multi-task batch processing
 
 # Returns
 - `val_out`: Array containing top-k elements (sorted)
-- `idx_out`: Array containing indices (if provided), otherwise nothing
+- `idx_out`: Array containing indices
 
 # Examples
 ```
-# Single call (workspace allocated internally)
+# Single task (allocate all required buffers)
 data = CUDA.randn(Float32, 10000)
 result = CUDA.zeros(Float32, 100)
-topk_radix_select!(data, result, 100; largest=true)
-
-# Multiple calls with workspace reuse (avoid allocation overhead)
-# Allocate for maximum expected stride
+idx_in = CUDA.zeros(Int32, 10000)
+idx_out = CUDA.zeros(Int32, 100)
 ws = RadiKWorkspace(CUDABackend(), 10000, 1)
+topk_radix_select!(data, result, Int32(100), ws, idx_in, idx_out, Int32[10000])
 
-# Reuse for any data with length ≤ 10000
+# Single task with workspace reuse (avoid allocation overhead)
+ws = RadiKWorkspace(CUDABackend(), 10000, 1)
+result = CUDA.zeros(Float32, 100)
+idx_in = CUDA.zeros(Int32, 10000)
+idx_out = CUDA.zeros(Int32, 100)
+
 for i in 1:100
     data = CUDA.randn(Float32, 10000)
-    result = CUDA.zeros(Float32, 100)
-    topk_radix_select!(data, result, 100; workspace=ws)
+    topk_radix_select!(data, result, Int32(100), ws, idx_in, idx_out, Int32[10000])
 end
 
 # Multi-task processing with workspace reuse
 ws = RadiKWorkspace(CUDABackend(), 10000, 4)  # max stride=10000, 4 tasks
-topk_radix_select!(data, result, 100; task_lens=[5000, 6000, 4000, 5500], workspace=ws)
-topk_radix_select!(data2, result2, 100; task_lens=[2500, 3000, 2000, 2500], workspace=ws)
+data = CUDA.randn(Float32, 10000)
+result = CUDA.zeros(Float32, 100, 4)
+idx_in = CUDA.collect(Int32(1):Int32(10000))
+idx_out = CUDA.zeros(Int32, 100, 4)
+topk_radix_select!(data, result, Int32(100), ws, idx_in, idx_out, Int32.[5000, 6000, 4000, 5500])
 ```
 
 # Workspace Reuse
@@ -343,15 +349,35 @@ function topk_radix_select!(
 end
 
 """
-    topk(data::AbstractArray{ValT}, k::Int; ::Val{LARGEST}=Val(true))
+    topk(data::AbstractArray{ValT}, k::Int, [::Type{IxT}=Int32]; largest=true, rev=false)
 
 Convenience wrapper that allocates output array, indices, and workspace.
 
 Allocates the result array, indices array, and workspace, then calls `topk_radix_select!`.
+Use this for simple single-task top-k operations where you don't need to reuse buffers.
+
+# Arguments
+- `data`: Input data array (AbstractArray{Float32})
+- `k`: Number of top elements to select
+- `IxT`: (Optional) Index type (default: Int32)
+- `largest`: Find largest (true) or smallest (false) elements (default: true)
+- `rev`: Sort output in descending (true) or ascending (false) order (default: false)
 
 # Returns
 - `result`: Array containing top-k elements (sorted)
 - `indices`: Array containing indices of top-k elements
+
+# Example
+```
+using RadiK, CUDA
+
+data = CUDA.randn(Float32, 1_000_000)
+values, indices = topk(data, 100; largest=true, rev=false)
+```
+
+# Notes
+- For repeated calls or multi-task processing, use `topk_radix_select!` directly
+  with a pre-allocated `RadiKWorkspace` for better performance
 """
 function topk(data::AbstractArray{ValT}, k, ::Type{IxT}=Int32; largest=true, rev=false) where {ValT, IxT}
     backend = get_backend(data)

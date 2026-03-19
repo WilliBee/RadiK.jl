@@ -13,41 +13,17 @@ using Atomix
 """
     select_candidate_kernel!(data_in, data_out, global_counts, bin_ids, task_lens, stride, ...)
 
-GPU kernel that filters elements belonging to a selected histogram bin.
+GPU kernel that filters elements belonging to selected histogram bins.
 
-# Purpose
-**The Problem**: You want to find the k-th largest (or smallest) element in a large array.
-You've run `count_bin!` to build a histogram, then `select_bin!` to determine which
-histogram bin contains your target element. But you still need to EXTRACT those elements
-to continue the search.
+After `select_bin!` identifies which bin contains the k-th element, this kernel extracts
+all elements from that bin to progressively narrow the search space.
 
-**The Solution**: This kernel filters the entire input array, keeping only elements that
-belong to the selected bin. This progressively narrows the search space.
-
-**Where It Fits in Radix Select**:
-1. `count_bin!` → Build histogram from all data (e.g., 256 bins based on top 8 bits)
-2. `select_bin!` → Find which bin contains the k-th element (e.g., "bin 42")
-3. **`select_candidate!`** → Filter data, keeping only elements in bin 42 ← YOU ARE HERE
-4. Repeat with remaining data using lower bits (next 8 bits)
-5. Continue until only k elements remain
-
-**Why This Works**: Each radix select iteration examines a different 8-bit segment of the
-data. By filtering to just the selected bin, we reduce the search space exponentially:
-- After iteration 1: ~1/256 of original data remains
-- After iteration 2: ~1/65,536 of original data remains
-- After iteration 3: Exact element found
-
-# Algorithm Overview
-1. **Block-level caching**: Each thread block uses shared memory (fast on-chip memory) to cache filtered elements
-2. **Filtering**: Each thread reads one element, computes its bin ID using `get_bin_id`, checks if it matches the target bin
-3. **Counting**: Matching elements are atomically added to a block-level counter (safe parallel access)
-4. **Global offset**: After all threads finish, one thread atomically reserves space in the global output array
-5. **Write back**: All threads collaboratively write their cached elements to the reserved output space
-
-**Why the cache?** Direct atomic writes to global memory would cause contention. By caching in shared memory first, we:
-- Reduce global memory traffic (only one atomic per block, not per element)
-- Improve coalescing (contiguous writes from all threads)
-- Minimize synchronization overhead
+# Algorithm
+1. **Block-level caching**: Use shared memory to cache filtered elements
+2. **Filtering**: Each thread reads elements, computes bin ID, checks for match
+3. **Counting**: Matching elements atomically added to block-level counter
+4. **Global offset**: Atomically reserve space in global output array
+5. **Write back**: Collaboratively write cached elements to reserved space
 
 # Arguments
 - `data_in`: Input data array [task_id * stride + idx]
@@ -59,84 +35,40 @@ data. By filtering to just the selected bin, we reduce the search space exponent
 - `Val{LEFT}`, `Val{RIGHT}`: Bit shift parameters for bin calculation
 - `Val{BLOCK}`: Threads per block
 
-# Performance Characteristics
-- **Time complexity**: O(task_len / BLOCK) per task
-- **Space complexity**: O(BLOCK) shared memory per block
-- **Parallel strategy**: 2D grid (blocks_x × num_tasks)
+# Example
 
-# Example - Filtering Elements by Bin ID
+Filter elements from bin 5 (using LEFT=0, RIGHT=4):
 
-**Context**: The previous step (`select_bin!`) determined that the target element is in bin 5.
-This kernel's job is simply to **extract all elements from bin 5** - nothing more.
-
-## Input State
-
+**Input:**
 ```
-data_in = [100, 85, 92, 78, 95, 88, 90, 82]      # Input data
-bin_id  = 5                                       # Target bin (given to us!)
-stride  = 10                                      # Array stride
-task_len= 8                                       # Elements to process
+data_in = [100, 85, 92, 78, 95, 88, 90, 82]
+bin_id  = 5
 ```
 
-## What Each Bin Contains (using LEFT=0, RIGHT=4 as example)
-
+**Bin contents:**
 ```
-Bin 0: [78, 82]       # Small values
-Bin 1: []             # Empty
-Bin 2: [85, 88]       # Medium-small
-Bin 3: [92]           # Medium
-Bin 4: []             # Empty
-Bin 5: [90, 95, 100]  # ← TARGET BIN (extract these 3 elements)
+Bin 0: [78, 82]       Bin 3: [92]
+Bin 1: []             Bin 4: []
+Bin 2: [85, 88]       Bin 5: [90, 95, 100]  ← TARGET
 ```
 
-**Note**: This kernel doesn't know WHY we want bin 5, it just extracts whatever is in bin 5.
-
-## Execution Walkthrough
-
-**Step 1: Filter and Cache** (BLOCK=4 threads)
-
+**Execution (BLOCK=4 threads):**
 ```
-Thread 0: reads data_in[1]=100 → bin_id=5 → MATCH! → cache[0]=100
-Thread 1: reads data_in[2]=85  → bin_id=2 → skip
-Thread 2: reads data_in[3]=92  → bin_id=3 → skip
-Thread 3: reads data_in[4]=78  → bin_id=0 → skip
-Thread 4: reads data_in[5]=95  → bin_id=5 → MATCH! → cache[1]=95
-Thread 5: reads data_in[6]=88  → bin_id=2 → skip
-Thread 6: reads data_in[7]=90  → bin_id=5 → MATCH! → cache[2]=90
-Thread 7: reads data_in[8]=82  → bin_id=0 → skip
-
-Result: block_count = 3, cache = [100, 95, 90, _, ...]
+Thread 0: 100 → bin 5 → MATCH → cache[0]=100
+Thread 1:  85 → bin 2 → skip
+Thread 2:  92 → bin 3 → skip
+Thread 3:  78 → bin 0 → skip
+Thread 4:  95 → bin 5 → MATCH → cache[1]=95
+Thread 5:  88 → bin 2 → skip
+Thread 6:  90 → bin 5 → MATCH → cache[2]=90
+Thread 7:  82 → bin 0 → skip
 ```
 
-**Step 2: Reserve Space in Global Output**
-
+**Output:**
 ```
-global_count[task_id] was 0, becomes 3 after atomicAdd
-Now we can safely write to data_out[0:2]
+data_out     = [100, 95, 90, 0, ...]
+global_count = [3]  # Found 3 elements in bin 5
 ```
-
-**Step 3: Write Back to Global Memory**
-
-```
-data_out[1] = cache[1] = 100
-data_out[2] = cache[2] = 95
-data_out[3] = cache[3] = 90
-```
-
-## Output State
-
-```
-data_out       = [100, 95, 90, 0, 0, 0, 0, 0]  # Filtered elements
-global_count   = [3]                           # Found 3 elements in bin 5
-```
-
-## Why This Matters
-
-We've narrowed our search from **8 elements** to just **3 elements**!
-The next radix select iteration will only work with [100, 95, 90] instead
-of all 8 elements. This progressive filtering is how radix select efficiently
-finds target elements - each iteration reduces the search space exponentially.
-
 """
 @kernel function select_candidate_kernel!(
     data_in::AbstractArray{T},
@@ -266,38 +198,26 @@ end
 end
 
 """
-    select_candidate_ex_kernel!(data_in, data_out, global_counts, bin_ids, task_offsets, stride, task_num, ...)
+    select_candidate_ex_kernel!(data_in, data_out, global_counts, bin_ids, task_offsets, ...)
 
-Enhanced GPU kernel with vectorization and scaling support.
+Enhanced GPU kernel with vectorization and scaling support for filtering by bin ID.
 
-# Purpose
-Same as `select_candidate_kernel!` (filters elements by bin ID), but with two key optimizations:
+Same as `select_candidate_kernel!` but with three key optimizations:
 
-**1. Vectorization (PACKSIZE)**: Instead of reading one element at a time, reads PACKSIZE
-elements (e.g., 4) in a single memory transaction. This reduces memory bandwidth pressure.
+**1. Vectorization**: Reads PACKSIZE elements (e.g., 4) per memory transaction instead of 1,
+reducing memory bandwidth pressure.
 
-**Example**:
-```julia
-# Basic version:    [val1, val2, val3, val4]  → 4 memory transactions
-# Vectorized:        [val1, val2, val3, val4]  → 1 memory transaction (faster!)
-```
+**2. Scaling**: When data has clustered values (e.g., all between 1.001 and 1.002), histogram
+bins may collide. Scaling subtracts a sample value to spread out the distribution.
 
-**2. Scaling (WITHSCALE)**: When data has clustered values (e.g., all between 1.001 and 1.002),
-histogram bins may collide. Scaling subtracts a sample value to spread out the distribution:
+**3. Cache Flushing**: For large datasets, periodically writes cached elements to global memory
+to prevent shared memory overflow.
 
-```julia
-# Without scaling:  [1.001, 1.002, 1.003]  → all map to same bin (bad!)
-# With scaling:     [0.000, 0.001, 0.002]  → map to different bins (good!)
-```
-
-**3. Cache Flushing**: For large datasets that exceed shared memory capacity, periodically
-writes cached elements to global memory and continues processing.
-
-# Algorithm Overview
-1. **Vectorized processing**: Load PACKSIZE elements per iteration (e.g., 4 floats at once)
-2. **Cache management**: Periodically flush cache when it exceeds capacity (2×BLOCK×PACKSIZE)
-3. **Scaling support**: Apply adaptive scaling to handle adversarial distributions
-4. **Padding handling**: Handle misaligned starting addresses (when offset % PACKSIZE ≠ 0)
+# Algorithm
+1. Vectorized processing: load PACKSIZE elements per iteration
+2. Cache management: periodically flush cache when capacity exceeded
+3. Scaling support: apply adaptive scaling for adversarial distributions
+4. Padding handling: handle misaligned starting addresses
 
 # Arguments
 - `data_in`: Input data array (packed vectorized reads)
@@ -312,34 +232,10 @@ writes cached elements to global memory and continues processing.
 - `Val{WITHSCALE}`: Whether to apply adaptive scaling
 - `Val{LARGEST}`: NaN handling (true → min, false → max)
 
-# Performance Characteristics
-- **Time complexity**: O(task_len / (BLOCK * PACKSIZE * grid_x)) per task
-- **Space complexity**: O(2 * BLOCK * PACKSIZE) shared memory per block
-- **Cache capacity**: 2 * BLOCK * PACKSIZE elements before flush required
-
-# When to Use Which Version?
-
-**Use `select_candidate!` (basic)** when:
-- You're learning or debugging the algorithm
-- Your data fits in GPU memory without optimization needs
-- Your data values are well-distributed (no clustering)
-
-**Use `select_candidate_ex!` (enhanced)** when:
-- You need maximum performance on large datasets
-- Your data has clustered/continuous values (e.g., all values between 1.0 and 1.1)
-- You're processing many tasks concurrently
-- Memory bandwidth is a bottleneck
-
-**Performance Impact** (typical gains):
-- Vectorization (PACKSIZE=4): ~2-3× faster memory access
-- Scaling: Prevents catastrophic slowdown on adversarial data
-- Cache flushing: Enables processing datasets larger than shared memory
-
-# Key Differences from Basic Version
-1. **Vectorized loads**: Read 4 elements per memory transaction instead of 1
-2. **Scaling**: Subtract sample value to handle clustered distributions
-3. **Cache flushing**: Prevents overflow for large task sizes (> cache capacity)
-4. **Strided processing**: Better load balancing across multiple blocks
+# When to Use
+- **Use `select_candidate!` (basic)** for learning/debugging, well-distributed data
+- **Use `select_candidate_ex!` (enhanced)** for maximum performance on large datasets,
+  clustered/continuous values, many concurrent tasks, or memory bandwidth bottlenecks
 """
 @kernel function select_candidate_ex_kernel!(
     data_in::AbstractArray{T},
@@ -496,10 +392,9 @@ end
 
 Filter elements belonging to selected histogram bins for each task.
 
-# Purpose
-After identifying which histogram bin contains the k-th element (via select_bin!),
-filter all input elements to extract only those in the selected bin.
-This narrows down the search space for the next iteration of radix select.
+After `select_bin!` identifies which bin contains the k-th element, this function
+filters all input elements to extract only those in the selected bin, narrowing the
+search space for the next radix select iteration.
 
 # Arguments
 - `data_in`: Input data array (layout: [task_id * stride + idx])
@@ -517,10 +412,6 @@ This narrows down the search space for the next iteration of radix select.
 - Global counts should be initialized to 0 before first call
 - Output array must be large enough to hold filtered elements
 
-# Outputs
-- `data_out`: Filtered elements for each task
-- `global_counts`: Updated with total filtered element count per task
-
 # Example
 ```julia
 using CUDA, RadiK
@@ -533,9 +424,7 @@ bin_ids = CuArray{Int32}([5])
 task_lens = CuArray{Int32}([5])
 stride = Int32(5)
 
-select_candidate!(data_in, data_out, global_counts, bin_ids, task_lens, stride;
-                 LEFT=0, RIGHT=20)
-
+select_candidate!(data_in, data_out, global_counts, bin_ids, task_lens, stride)
 println("Filtered count: ", Array(global_counts)[1])
 ```
 
@@ -578,7 +467,7 @@ end
                         LEFT=0, RIGHT=20, threads_per_block=256, blocks_x=16,
                         pack_size=4, with_scale=true, largest=true)
 
-Enhanced version with vectorization and scaling support.
+Enhanced version with vectorization and scaling support for filtering by bin ID.
 
 # Arguments
 - `data_in`: Input data array (any Float type)

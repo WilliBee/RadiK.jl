@@ -8,31 +8,21 @@ using KernelAbstractions.Extras: @unroll
 using KernelIntrinsics: @shfl
 
 """
-    cross_warp_reduction!(prefix_sum, warp_id, thread_x, sum, ::Val{LARGEST}, ::Val{NUM_WARPS}, ::Val{WARP_SIZE})
+    cross_warp_reduction!(prefix_sum, warp_id, thread_x, sum, ...)
 
-Perform tree reduction across warps to compute global prefix sum.
+Tree reduction across warps to compute global prefix sum. Doubles distance each iteration
+(i=1,2,4,8...). LARGEST scans forward (adds from higher warps), smallest scans backward.
 
-# Algorithm
-- Tree reduction pattern: i = 1, 2, 4, 8, ... (doubling each iteration)
-- For LARGEST: each warp adds sums from higher-indexed warps (forward scan)
-- For smallest: each warp adds sums from lower-indexed warps (backward scan)
-- After each iteration, updated sum is written to shared memory for next iteration
-
-# Arguments
+**Parameters:**
 - `prefix_sum`: Shared memory array [BLOCK] storing per-thread prefix sums
 - `warp_id`: 0-indexed warp ID (0 to NUM_WARPS-1)
 - `thread_x`: 1-indexed thread ID in block (1 to BLOCK)
 - `sum`: This thread's prefix sum from warp-level scan (modified in-place)
 - `Val{LARGEST}`: Scan direction (true=forward, false=backward)
-- `Val{NUM_WARPS}`: Total number of warps in block
+- `Val{NUM_WARPS}`: Total warps in block
 - `Val{WARP_SIZE}`: Threads per warp (typically 32)
 
-# Returns
-- Updated global prefix sum for this thread
-
-# Indexing Notes
-- LARGEST: reads from thread (warp_id + i) * WARP_SIZE + 1 (first thread of next warp, 1-indexed)
-- smallest: reads from thread (warp_id - i) * WARP_SIZE + 32 (last thread of previous warp)
+**Returns:** Updated global prefix sum for this thread
 """
 @inline function cross_warp_reduction!(
     prefix_sum,
@@ -78,8 +68,8 @@ end
 Compute the neighbor thread's prefix sum to determine this thread's element range.
 
 # Algorithm
-- For LARGEST: neighbor = next thread's prefix sum (exclusive scan from right)
-- For smallest: neighbor = previous thread's prefix sum (exclusive scan from left)
+- For `LARGEST`: neighbor = next thread's prefix sum (exclusive scan from right)
+- For `!LARGEST`: neighbor = previous thread's prefix sum (exclusive scan from left)
 - Boundary threads return 0 (no neighbor)
 
 # Arguments
@@ -90,7 +80,7 @@ Compute the neighbor thread's prefix sum to determine this thread's element rang
 - `T`: Element type (for zero initialization)
 
 # Returns
-- Neighbor's prefix sum, or 0 if no neighbor
+Neighbor's prefix sum, or 0 if no neighbor.
 
 # Examples
 ```julia
@@ -125,8 +115,8 @@ Find the histogram bin containing the k-th element and write results.
 3. Write bin ID (0-indexed), updated k value, and bin count to output arrays
 
 # Search Direction
-- LARGEST=true: search backward from highest bin to lowest
-- LARGEST=false: search forward from lowest bin to highest
+- `LARGEST=true`: search backward from highest bin to lowest
+- `LARGEST=false`: search forward from lowest bin to highest
 
 # Arguments
 - `counts`: Private memory array of bin counts assigned to this thread
@@ -140,7 +130,6 @@ Find the histogram bin containing the k-th element and write results.
 - `k_values`: Output array for updated k values (1-indexed within bin)
 - `task_lens`: Output array for counts in selected bin
 - `Val{LARGEST}`: Search direction
-
 """
 @inline function find_bin_and_write!(
     counts, old_k, neighbor, sum, thread_x, UNROLL,
@@ -192,12 +181,8 @@ This is used in radix select to progressively narrow down the search space.
 - `Val{LARGEST}`: Find k-th largest (true) or k-th smallest (false)
 - `Val{BLOCK}`: Threads per block (must be multiple of 32)
 - `Val{HISTLEN}`: Histogram length (must be multiple of BLOCK)
+- `Val{UNROLL}`: Bins per thread (HISTLEN ÷ BLOCK)
 - `Val{WARP_SIZE}`: Threads per warp (typically 32)
-
-# Performance Characteristics
-- **Time complexity**: O(log(BLOCK)) per task (tree reduction)
-- **Space complexity**: O(BLOCK) shared memory per block
-- **Parallel strategy**: One task per block, all threads collaborate per task
 
 # Example
 
@@ -372,7 +357,6 @@ end
 
 Find the histogram bin containing the k-th element for each task.
 
-# Purpose
 For each task, determines which histogram bin contains the k-th smallest or largest element,
 and updates the k value to be the position within that bin. Used iteratively in radix select
 to progressively narrow down the search space.

@@ -82,15 +82,11 @@ end
 end
 
 # ==============================================================================
-# Filter staging functions (matching CUDA macros)
+# Filter staging functions
 # ==============================================================================
-# These are defined outside kernels to match the CUDA macro pattern
-# They handle the core filtering logic: compare scaled values, stage original values
 
 """
 Filter a single packed element: compare scaled value, stage original value if it passes.
-    @inline _get_packed_index(idx, j) = get_packed_index(idx, j, idx_in, offset, pad, Val(PACKSIZE), Val(WITHIDXIN), Val(IdxT))
-    @inline _stage_pair!(val, idx) = stage_pair!(block_count, val_block_cache, idx_block_cache, val, idx, Val(T))
 """
 @inline function filter_stage_packed!(
     ctx::ThreadFilterContext, kctx::KernelFilterContext{LARGEST, BLOCK, PACKSIZE, WITHIDXIN, ValT, IdxT},
@@ -110,8 +106,6 @@ end
 
 """
 Filter a single scalar element: compare scaled value, stage original value if it passes.
-    @inline _get_item_index(idx) = get_item_index(idx, idx_in, offset, pad, Val(WITHIDXIN), Val(IdxT))
-    @inline _stage_pair!(val, idx) = stage_pair!(block_count, val_block_cache, idx_block_cache, val, idx, Val(T))
 """
 @inline function filter_stage_item!(
     ctx::ThreadFilterContext, kctx::KernelFilterContext{LARGEST, BLOCK, PACKSIZE, WITHIDXIN, ValT, IdxT},
@@ -133,100 +127,33 @@ end
     filter_kernel!(data_in, idx_in, kth_element, val_out, idx_out, global_counts,
                    boundary_counts, task_offsets, stride, K, ...)
 
-GPU kernel that performs final top-K selection using k-th element threshold.
+GPU kernel for final top-K selection using k-th element threshold.
 
-# Purpose
-After multiple iterations of histogram-based filtering have narrowed the search space,
-this kernel performs the final extraction of the top-K elements.
+Compares SCALED values against threshold but outputs ORIGINAL (unscaled) values.
+Optimizes for small datasets (N ≤ K) by copying all elements.
 
-**Key Insight**: This kernel compares SCALED values against a SCALED threshold,
-but outputs ORIGINAL (unscaled) values. This is the final stage that converts
-from the internal scaled representation back to user-visible original values.
-
-# Algorithm Overview
-1. **Small dataset optimization** (N ≤ K): Copy all elements without filtering
-2. **Large dataset filtering** (N > K):
-   - Sample scaling factor from original data
-   - Compare scaled values against k-th element threshold
-   - Output original values for elements that pass the threshold
-   - Handle boundary cases (elements equal to k-th element)
-
-# ⚠️ CRITICAL PRECONDITION ⚠️
-
-**This kernel assumes that approximately K elements will pass the filter.**
-
-The `kth_element` threshold MUST be computed by previous radix selection/histogram passes
-such that:
-- When `LARGEST=true`: ≈K elements have `scaled_value > kth_element`
-- When `LARGEST=false`: ≈K elements have `scaled_value < kth_element`
-- Elements with `scaled_value == kth_element` are handled via `boundary_counts`
-
-**DO NOT call this kernel directly with arbitrary thresholds!** The output arrays
-`val_out` and `idx_out` are sized for exactly K elements. If more than K elements pass
-the filter, you WILL get buffer overflows and illegal memory accesses.
-
-**For testing**: Ensure your `kth_element` is set such that only ≈K elements qualify.
-For example, with sorted data and `K=10, LARGEST=true`, use `kth_element = data[end-9]`
-(the 10th largest value) to ensure only 10 elements pass.
+**⚠️ CRITICAL**: `kth_element` must be computed by previous radix passes such that
+≈K elements pass the filter. Output arrays sized for exactly K elements - buffer
+overflow will occur if more than K elements qualify.
 
 # Arguments
 - `data_in`: Input data array (original values)
-- `idx_in`: Input indices array (optional, based on WITHIDXIN)
+- `idx_in`: Input indices array
 - `kth_element`: K-th element values (scaled, from previous iterations)
-- `val_out`: Output values array (original values)
-- `idx_out`: Output indices array
+- `val_out`: Output values array [K × num_tasks]
+- `idx_out`: Output indices array [K × num_tasks]
 - `global_counts`: Global count array tracking elements per task
 - `boundary_counts`: Boundary count for elements equal to k-th element
 - `task_offsets`: Task offset array defining task boundaries
 - `stride`: Stride between task data in arrays
-- `K`: Number of top elements to select
-- `Val{LEFT}`, `Val{RIGHT}`: Bit shift parameters (for potential bin ID calculations)
+- `K`: Number of top elements to select per task
+- `Val{LEFT}`, `Val{RIGHT}`: Bit shift parameters
 - `Val{BLOCK}`: Threads per block
 - `Val{PACKSIZE}`: Elements per vectorized load
-- `Val{CACHESIZE}`: Cache size for filtered elements
-- `Val{WITHSCALE}`: Whether to apply adaptive scaling
-- `Val{LARGEST}`: NaN handling (true → filter largest, false → filter smallest)
+- `Val{CACHESIZE}`: Cache size for filtered elements (K ≤ 1024)
+- `Val{WITHSCALE}`: Apply adaptive scaling
+- `Val{LARGEST}`: Select largest (true) or smallest (false)
 - `Val{WITHIDXIN}`: Whether input indices are provided
-
-# Performance Characteristics
-- **Time complexity**: O(task_len / (BLOCK * PACKSIZE)) per task
-- **Space complexity**: O(CACHESIZE) shared memory per block
-- **Parallel strategy**: 2D grid (blocks_x × num_tasks)
-
-# Example - Filtering Top-K Elements
-
-## Input State
-
-```
-data_in = [100, 85, 92, 78, 95, 88, 90, 82]      # Original input
-kth_element = [88]                                # K-th element (scaled if WITHSCALE=true)
-K = 3                                             # Want top 3 elements
-```
-
-## Execution (LARGEST=true)
-
-```
-# For each element:
-# 1. Scale the value (if WITHSCALE=true)
-# 2. Compare scaled value with kth_element
-# 3. If greater, stage ORIGINAL value to output
-
-100 → scaled > 88 → stage 100
-85  → scaled < 88 → skip
-92  → scaled > 88 → stage 92
-78  → scaled < 88 → skip
-95  → scaled > 88 → stage 95
-88  → scaled == 88 → boundary handling
-```
-
-## Output State
-
-```
-val_out = [100, 95, 92, 0, 0, ...]  # Top 3 largest elements (original values)
-idx_out = [0, 4, 2, 0, 0, ...]      # Their indices
-global_count = [3]                   # Found 3 elements
-```
-
 """
 @kernel function filter_kernel!(
     data_in::AbstractArray{ValT},
@@ -445,42 +372,14 @@ end
 
 Enhanced GPU kernel for final top-K selection with aggressive cache flushing.
 
-# Purpose
-Same as `filter_kernel!`, but optimized for K > 1024 with more aggressive
-cache management to prevent overflow.
+Same as `filter_kernel!` but optimized for K > 1024. Flushes cache after each
+main loop iteration for safer overflow handling at the cost of higher overhead.
 
-**Key Difference**: Flushes cache after each main loop iteration instead of
-just once at the end. This is safer for larger datasets but has higher overhead.
+**⚠️ CRITICAL**: Same precondition as `filter_kernel!` - `kth_element` must ensure
+≈K elements pass the filter to prevent buffer overflow.
 
-# Algorithm
-Same as `filter_kernel!` but with:
-1. Dynamic cache size (BLOCK × PACKSIZE instead of fixed CACHESIZE)
-2. Cache flushing after each iteration
-3. Frequent counter resets
-
-# When to Use
-- Use `filter!` for K ≤ 1024 (better performance)
-- Use `filter_general!` for K > 1024 (safer for large datasets)
-
-# ⚠️ CRITICAL PRECONDITION ⚠️
-
-**This kernel assumes that approximately K elements will pass the filter.**
-
-The `kth_element` threshold MUST be computed by previous radix selection/histogram passes
-such that:
-- When `LARGEST=true`: ≈K elements have `scaled_value > kth_element`
-- When `LARGEST=false`: ≈K elements have `scaled_value < kth_element`
-- Elements with `scaled_value == kth_element` are handled via `boundary_counts`
-
-**DO NOT call this kernel directly with arbitrary thresholds!** The output arrays
-`val_out` and `idx_out` are sized for exactly K elements. If more than K elements pass
-the filter, you WILL get buffer overflows and illegal memory accesses.
-
-**For testing**: Ensure your `kth_element` is set such that only ≈K elements qualify.
-For example, with sorted data and `K=10, LARGEST=true`, use `kth_element = data[end-9]`
-(the 10th largest value) to ensure only 10 elements pass.
-
-See `filter_kernel!` for detailed documentation.
+**When to use:** K > 1024 (use `filter_kernel!` for K ≤ 1024 for better performance).
+See `filter_kernel!` for parameter documentation.
 """
 @kernel function filter_general_kernel!(
     data_in::AbstractArray{ValT},
@@ -715,70 +614,33 @@ end
 
 """
     filter!(data_in, idx_in, kth_element, val_out, idx_out, global_counts,
-            boundary_counts, task_offsets, stride, K;
-            <keyword arguments>)
+            boundary_counts, task_offsets, stride, K; ...)
 
-Filter elements by k-th element threshold to extract top-K elements.
-
-# Purpose
-Final stage of radix top-K selection: filters input data using a k-th element threshold,
-extracting the top-K largest (or smallest) elements with their indices.
+Convenience wrapper for `filter_kernel!`. Filters elements by k-th element threshold.
 
 # Arguments
 - `data_in`: Input data array (original values)
-- `idx_in`: Input indices array (empty array if WITHIDXIN=false)
+- `idx_in`: Input indices array
 - `kth_element`: K-th element values (scaled, one per task)
 - `val_out`: Output values array [K × num_tasks]
 - `idx_out`: Output indices array [K × num_tasks]
-- `global_counts`: Global count array [num_tasks] (should be initialized to 0)
+- `global_counts`: Global count array [num_tasks] (initialize to 0)
 - `boundary_counts`: Boundary count array [num_tasks] (elements equal to k-th)
 - `task_offsets`: Task offset array [num_tasks + 1]
 - `stride`: Stride between task data in arrays
 - `K`: Number of top elements to select per task
 
 # Keyword Arguments
-- `LEFT=0`: Left bit shift parameter
-- `RIGHT=20`: Right bit shift parameter
+- `LEFT=0`, `RIGHT=20`: Bit shift parameters
 - `threads_per_block=256`: GPU block size
+- `blocks_x=16`: Number of blocks in x-dimension
 - `pack_size=4`: Elements per vectorized load
-- `with_scale=true`: Whether to apply scaling
+- `with_scale=true`: Apply adaptive scaling
 - `largest=true`: Select largest (true) or smallest (false)
 - `with_idx_in=false`: Whether input indices are provided
 
 # Constraints
-- K ≤ 1024 (use `filter_general!` for larger K)
-- Global and boundary counts should be initialized to 0 before call
-- Output arrays must be large enough to hold K elements per task
-
-# Outputs
-- `val_out`: Top-K values (original, unscaled)
-- `idx_out`: Their indices
-- `global_counts`: Number of elements selected per task
-
-# Example
-```
-using RadiK, CUDA
-
-# Setup
-data = CuArray{Float32}([100, 85, 92, 78, 95, 88, 90, 82])
-kth = CuArray{Float32}([88])  # 3rd largest element
-val_out = CUDA.zeros(Float32, 3)
-idx_out = CUDA.zeros(Int32, 3)
-global_counts = CUDA.zeros(Int32, 1)
-boundary_counts = CUDA.zeros(Int32, 1)
-task_offsets = CuArray{Int32}([0, 8])
-
-# Filter top 3 largest elements
-filter!(data, CuArray{Int32}([]), kth, val_out, idx_out,
-        global_counts, boundary_counts, task_offsets, Int32(8), Int32(3))
-
-println("Top 3: ", Array(val_out))  # [100.0, 95.0, 92.0]
-println("Count: ", Array(global_counts))  # [3]
-```
-
-# See also
-- [`filter_general!`](@ref): For K > 1024
-- [`select_candidate!`](@ref): Previous stage in radix top-K
+K ≤ 1024 (use `filter_general!` for larger K).
 """
 function filter_!(
     data_in::AbstractArray{ValT},
@@ -832,40 +694,12 @@ end
 
 """
     filter_general!(data_in, idx_in, kth_element, val_out, idx_out, global_counts,
-                    boundary_counts, task_offsets, stride, K;
-                    <keyword arguments>)
+                    boundary_counts, task_offsets, stride, K; ...)
 
-Filter elements by k-th element threshold for K > 1024.
+Convenience wrapper for `filter_general_kernel!`. For K > 1024 with aggressive
+cache flushing to prevent overflow.
 
-# Purpose
-Same as `filter!` but optimized for larger K values with aggressive cache flushing
-to prevent overflow. Use this when K > 1024.
-
-# Arguments
-Same as `filter!`
-
-# Keyword Arguments
-Same as `filter!`
-
-# When to Use
-- K > 1024
-- Datasets with highly variable sizes
-- When cache overflow is a concern
-
-# Example
-```
-using RadiK, CUDA
-
-# Large K example
-K = Int32(2048)
-data = CuArray{Float32}(randn(10000))  # 10K random values
-# ... (same setup as filter!)
-filter_general!(data, idx_in, kth, val_out, idx_out,
-               global_counts, boundary_counts, task_offsets, stride, K)
-```
-
-# See also
-- [`filter!`](@ref): For K ≤ 1024
+Same parameters as `filter!`. Use when K > 1024.
 """
 function filter_general!(
     data_in::AbstractArray{ValT},

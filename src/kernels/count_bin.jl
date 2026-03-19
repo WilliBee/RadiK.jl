@@ -4,6 +4,19 @@ using KernelAbstractions.Extras: @unroll
 using KernelIntrinsics: vload
 using Atomix
 
+"""
+    count_bin_kernel!(histogram, data_in, task_lens, stride, ...)
+
+GPU kernel for histogram bin counting. Uses per-block shared memory with atomic merging.
+
+# Arguments
+- `histogram`: 2D output array [hist_len, num_tasks]
+- `data_in`: Input data array
+- `task_lens`: Length of each task
+- `stride`: Maximum stride for data access
+- `Val{LEFT}`, `Val{RIGHT}`: Bit shift parameters for bin calculation
+- `Val{HIST_LEN}`: Number of histogram bins
+"""
 @kernel function count_bin_kernel!(
     histogram,
     data_in,
@@ -47,28 +60,19 @@ end
 
 
 """
-    count_bin_ka!(histogram, data_in, task_offsets, task_num, ...)
+    count_bin_ex_kernel!(histogram, data_in, task_offsets, ...)
 
-GPU kernel for counting histogram bins across multiple tasks with vectorized loads.
+GPU kernel for histogram bin counting with vectorized loads across multiple tasks.
+Uses shared memory per-block with atomic merging to global histogram.
 
-# Algorithm
-- Each task processes a contiguous range of `data_in`
-- Threads within a block collaborate to build a shared (local) histogram
-- Vectorized loads (`vload`) read PACKSIZE elements at once for efficiency
-- Three processing phases per task:
-  1. **First loop**: Handle misaligned start (padding) if offset not PACKSIZE-aligned
-  2. **Main loop**: Full vectorized loads, each thread processes PACKSIZE values
-  3. **Tail**: Scalar loads for remaining elements (< PACKSIZE)
-
-# Parameters
+# Arguments
 - `histogram`: 2D output array [hist_len, num_tasks]
 - `data_in`: Input data array
 - `task_offsets`: Prefix sum array defining task boundaries
-- `task_num`: Number of tasks to process
 - `Val{LEFT}`, `Val{RIGHT}`: Bit shift parameters for bin calculation
 - `Val{HIST_LEN}`: Number of histogram bins
 - `Val{PACKSIZE}`: Elements per vectorized load
-- `Val{WITHSCALE}`: Whether to apply adaptive scaling
+- `Val{WITHSCALE}`: Apply adaptive scaling for adversarial distributions
 - `Val{LARGEST}`: NaN handling (true → min, false → max)
 """
 @kernel function count_bin_ex_kernel!(
@@ -199,9 +203,23 @@ GPU kernel for counting histogram bins across multiple tasks with vectorized loa
 end
 
 # ========================================
-# Convenience wrapper
+# Convenience wrappers
 # ========================================
 
+"""
+    count_bin!(histogram, data_in, task_lens, stride; ...)
+
+Convenience wrapper for `count_bin_kernel!`. Computes histogram bins for multi-task data.
+
+# Arguments
+- `histogram`: 2D output array [hist_len, num_tasks]
+- `data_in`: Input data array (AbstractArray{Float32})
+- `task_lens`: Length of each task
+- `stride`: Maximum stride for data access
+- `LEFT`: Bit shift parameter (default: 0)
+- `RIGHT`: Bit shift parameter (default: 28)
+- `threads_per_block`: Thread block size (default: 256)
+"""
 function count_bin!(
     histogram::AbstractArray{Int32}, 
     data_in::AbstractArray{Float32},
@@ -228,6 +246,23 @@ function count_bin!(
 end
 
 
+"""
+    count_bin_ex!(histogram, data_in, task_offsets; ...)
+
+Convenience wrapper for `count_bin_ex_kernel!`. Computes histogram bins with vectorized loads.
+
+# Arguments
+- `histogram`: 2D output array [hist_len, num_tasks]
+- `data_in`: Input data array
+- `task_offsets`: Prefix sum array defining task boundaries
+- `LEFT`: Bit shift parameter (default: 0)
+- `RIGHT`: Bit shift parameter (default: 28)
+- `threads_per_block`: Thread block size (default: 1024)
+- `blocks_x`: Number of blocks in x-dimension (default: 16)
+- `pack_size`: Elements per vectorized load (default: 4)
+- `with_scale`: Apply adaptive scaling (default: true)
+- `largest`: NaN handling (default: true)
+"""
 function count_bin_ex!(
     histogram::AbstractArray{Int32, 2},
     data_in::AbstractArray{T},
