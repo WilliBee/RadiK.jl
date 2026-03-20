@@ -106,7 +106,11 @@ result, indices_out = topk_radix_select!(
 
 ## API Reference
 
-### `topk(data, k; largest=true, rev=false)`
+### RadiK.topk
+
+```
+topk(data, k; largest=true, rev=false)
+```
 
 Convenience wrapper that allocates all necessary buffers.
 
@@ -125,7 +129,11 @@ Convenience wrapper that allocates all necessary buffers.
 values, indices = topk(data, 100; largest=true, rev=false)
 ```
 
-### `topk_radix_select!(val_in, val_out, k, ws, idx_in, idx_out, task_lens, [::Val{LARGEST}=Val(true)], [::Val{ASCEND}=Val(true)], [::Val{WITHSCALE}=Val(false)], [::Val{WITHIDXIN}=Val(false)], [::Val{WITHPACKING}=Val(true)])`
+### RadiK.topk_radix_select!
+
+```
+topk_radix_select!(val_in, val_out, k, ws, idx_in, idx_out, task_lens, [::Val{LARGEST}=Val(true)], [::Val{ASCEND}=Val(true)], [::Val{WITHSCALE}=Val(false)], [::Val{WITHIDXIN}=Val(false)], [::Val{WITHPACKING}=Val(true)])
+```
 
 Find top-k elements using radix-based selection (full control, pre-allocated).
 
@@ -149,7 +157,11 @@ Find top-k elements using radix-based selection (full control, pre-allocated).
 - `val_out::AbstractArray{Float32}`: Top-k values (modified in-place)
 - `idx_out::AbstractArray{Int32}`: Top-k indices (modified in-place)
 
-### `RadiKWorkspace(backend, n, num_tasks, [T=Int], [ValT=Float32])`
+### RadiK.RadiKWorkspace
+
+```
+RadiKWorkspace(backend, n, num_tasks, [T=Int], [ValT=Float32])
+```
 
 Pre-allocated workspace for zero-allocation repeated calls.
 
@@ -181,7 +193,7 @@ topk_radix_select!(data2, result2, Int32(64), ws, idx2_in, idx2_out, Int32[2500,
 - **Batch efficient**: Multi-task processing amortizes kernel launch overhead
 - **Consistent performance**: Independent of data distribution (radix-based)
 
-### Benchmark Result (single-task)
+### Benchmark Results (single-task)
 
 **Running benchmarks :**
 ```bash
@@ -226,6 +238,10 @@ Timings RadiK.jl (Burst / Steady in milliseconds):
 │ 2^29 │  25.73 / 33.5 │ 28.79 / 39.92 │ 29.28 / 39.61 │ 29.0 / 40.06 │ 29.15 / 39.74 │ 29.39 / 39.45 │ 28.87 / 39.46 │ 30.39 / 40.46 │ 30.58 / 40.49 │
 └──────┴───────────────┴───────────────┴───────────────┴──────────────┴───────────────┴───────────────┴───────────────┴───────────────┴───────────────┘
 ```
+
+### Other Benchmark Results (multi-task, other backends)
+
+See `bencharmarks/README.md`
 
 ## TODO
 
