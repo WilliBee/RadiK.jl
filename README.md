@@ -68,7 +68,7 @@ data = CUDA.randn(Float32, n)
 # Reuse workspace for multiple calls - zero allocation overhead
 for i in 1:100
     rand!(data)
-    topk_radix_select!(data, result, k, ws, idx_in, idx_out, Int32[n])
+    topk_radix_select!(result, idx_out, ws, data, idx_in, Int32[n], k)
     # Workspace and buffers reused automatically
 end
 ```
@@ -96,8 +96,8 @@ indices_out = CUDA.zeros(Int32, 64, 4)
 
 # Find top-64 for all 4 tasks in one call
 result, indices_out = topk_radix_select!(
-    data, result, Int32(64), ws,
-    indices, indices_out, Int32.(task_lens)
+    result, indices_out, ws,
+    data, indices, Int32.(task_lens), Int32(64)
 )
 
 # Each task's results are in result[:, task_id]

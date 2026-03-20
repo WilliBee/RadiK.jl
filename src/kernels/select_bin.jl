@@ -266,10 +266,10 @@ Step 4: Select bin
 
 """
 @kernel function select_bin_kernel!(
-    histogram::AbstractArray{T, 2},
     bin_ids::AbstractArray{T},
     k_values::AbstractArray{T},
     task_lens::AbstractArray{T},
+    histogram::AbstractArray{T, 2},
     ::Val{LARGEST},
     ::Val{BLOCK},
     ::Val{HISTLEN},
@@ -411,10 +411,10 @@ println("Bin count: ", Array(task_lens)[1])   # Output: 1 (bin has 1 element)
 - [`select_bin_kernel!`](@ref): GPU kernel implementation
 """
 function select_bin!(
-    histogram::AbstractArray{T, 2},
     bin_ids::AbstractArray{T},
     k_values::AbstractArray{T},
-    task_lens::AbstractArray{T};
+    task_lens::AbstractArray{T},
+    histogram::AbstractArray{T, 2};
     largest::Bool = true,
     threads_per_block = 32,
     warp_size = 32
@@ -435,7 +435,7 @@ function select_bin!(
     kernel! = select_bin_kernel!(backend, threads_per_block)
 
     kernel!(
-        histogram, bin_ids, k_values, task_lens,
+        bin_ids, k_values, task_lens, histogram,
         Val(largest), Val(threads_per_block), Val(hist_len), Val(unroll), Val(warp_size);
         ndrange=num_tasks * threads_per_block
     )

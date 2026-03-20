@@ -23,8 +23,7 @@ using RadiK:
         target_bin = get_bin_id(Float32(3.0), Val(LEFT), Val(RIGHT)) + 1    # 1-based
         bin_ids = adapt(backend, Int32[target_bin])
 
-        select_candidate!(
-            data_in, data_out, global_counts, bin_ids, task_lens, stride;
+        select_candidate!(data_out, global_counts, data_in, bin_ids, task_lens, stride;
             LEFT=LEFT, RIGHT=RIGHT, threads_per_block=4
         )
 
@@ -66,8 +65,7 @@ using RadiK:
         bin3_id = get_bin_id(Float32(25.0), Val(0), Val(20)) + 1
         bin_ids = adapt(backend, Int32[bin1_id, bin2_id, bin3_id])
 
-        select_candidate!(
-            data_in, data_out, global_counts, bin_ids, task_lens, Int32(stride);
+        select_candidate!(data_out, global_counts, data_in, bin_ids, task_lens, Int32(stride);
             LEFT=0, RIGHT=20, threads_per_block=8
         )
 
@@ -103,7 +101,7 @@ using RadiK:
         bin_ids = adapt(backend, Int32[target_bin])
 
         for threads_per_block in [1, 2, 4, 8, 16, 32]
-            select_candidate!(data_in, data_out, global_counts, bin_ids, task_lens, stride;
+            select_candidate!(data_out, global_counts, data_in, bin_ids, task_lens, stride;
                             LEFT=0, RIGHT=20, threads_per_block=threads_per_block)
 
             count = Array(global_counts)[1]
@@ -126,7 +124,7 @@ using RadiK:
         bin_ids = adapt(backend, Int32[target_bin])
 
         # Should not crash
-        select_candidate!(data_in, data_out, global_counts, bin_ids, task_lens, stride;
+        select_candidate!(data_out, global_counts, data_in, bin_ids, task_lens, stride;
                         LEFT=0, RIGHT=20, threads_per_block=4)
 
         @test Array(global_counts)[1] == 0
@@ -156,7 +154,7 @@ using RadiK:
         task_lens = adapt(backend, Int32[length(data)])
         bin_ids = adapt(backend, Int32[target_bin])
 
-        select_candidate!(data_in, data_out, global_counts, bin_ids, task_lens, Int32(stride);
+        select_candidate!(data_out, global_counts, data_in, bin_ids, task_lens, Int32(stride);
                         LEFT=0, RIGHT=20, threads_per_block=8)
 
         gpu_count = Array(global_counts)[1]
@@ -199,8 +197,7 @@ using RadiK:
             ]
             bin_ids_gpu = adapt(backend, bin_ids)
 
-            select_candidate_ex!(
-                data_in, data_out, global_counts, bin_ids_gpu, task_offsets_gpu,
+            select_candidate_ex!(data_out, global_counts, data_in, bin_ids_gpu, task_offsets_gpu,
                 LEFT=0, RIGHT=20, threads_per_block=64, blocks_x=16,
                 pack_size=4, with_scale=SCALE, largest=true
             )
@@ -238,8 +235,7 @@ using RadiK:
         task_offsets_gpu = adapt(backend, task_offsets)
 
         for pack_size in [2, 4, 8, 16]
-            select_candidate_ex!(
-                data_in, data_out, global_counts, bin_ids, task_offsets_gpu,
+            select_candidate_ex!(data_out, global_counts, data_in, bin_ids, task_offsets_gpu,
                 LEFT=0, RIGHT=20, threads_per_block=32, blocks_x=16,
                 pack_size=pack_size, with_scale=false, largest=true
             )

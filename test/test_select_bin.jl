@@ -196,7 +196,7 @@ using RadiK:
         k_values_gpu = adapt(backend, Int32[5])     # Find 5th largest
         task_lens_gpu = KA.zeros(backend, Int32, 1)
 
-        select_bin!(histogram_gpu, bin_ids_gpu, k_values_gpu, task_lens_gpu;
+        select_bin!(bin_ids_gpu, k_values_gpu, task_lens_gpu, histogram_gpu;
             largest=true, threads_per_block=256, warp_size=WARP_SIZE)
 
         bin_id = Array(bin_ids_gpu)[1]
@@ -218,7 +218,7 @@ using RadiK:
         k_values_gpu = adapt(backend, Int32[5])     # Find 5th smallest
         task_lens_gpu = KA.zeros(backend, Int32, 1)
 
-        select_bin!(histogram_gpu, bin_ids_gpu, k_values_gpu, task_lens_gpu;
+        select_bin!(bin_ids_gpu, k_values_gpu, task_lens_gpu, histogram_gpu;
             largest=false, threads_per_block=256, warp_size=WARP_SIZE)
 
         bin_id = Array(bin_ids_gpu)[1]
@@ -240,7 +240,7 @@ using RadiK:
             k_values_gpu = adapt(backend, Int32[5])
             task_lens_gpu = KA.zeros(backend, Int32, 1)
 
-            select_bin!(histogram_gpu, bin_ids_gpu, k_values_gpu, task_lens_gpu;
+            select_bin!(bin_ids_gpu, k_values_gpu, task_lens_gpu, histogram_gpu;
                 largest=true, threads_per_block=threads_per_block, warp_size=WARP_SIZE)
 
             bin_id = Array(bin_ids_gpu)[1]
@@ -269,7 +269,7 @@ using RadiK:
         k_values_gpu = adapt(backend, Int32[5, 7, 8])
         task_lens_gpu = KA.zeros(backend, Int32, num_tasks)
 
-        select_bin!(histogram_gpu, bin_ids_gpu, k_values_gpu, task_lens_gpu;
+        select_bin!(bin_ids_gpu, k_values_gpu, task_lens_gpu, histogram_gpu;
             largest=true, threads_per_block=256, warp_size=WARP_SIZE)
 
         bin_ids = Array(bin_ids_gpu)
@@ -299,7 +299,7 @@ using RadiK:
         k_values_gpu = adapt(backend, Int32[3])
         task_lens_gpu = KA.zeros(backend, Int32, 1)
 
-        select_bin!(histogram_gpu, bin_ids_gpu, k_values_gpu, task_lens_gpu;
+        select_bin!(bin_ids_gpu, k_values_gpu, task_lens_gpu, histogram_gpu;
             largest=true, threads_per_block=256, warp_size=WARP_SIZE)
 
         @test Array(bin_ids_gpu)[1] == 1

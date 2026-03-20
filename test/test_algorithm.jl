@@ -59,8 +59,8 @@ Random.seed!(42)
             indices_in = adapt(backend, collect(Int32(1):Int32(total_len)))
 
             result, indices_out = topk_radix_select!(
-                data, result, Int32(k), ws,
-                indices_in, indices_out, Int32.(task_lens),
+                result, indices_out, ws,
+                data, indices_in, Int32.(task_lens), Int32(k),
                 Val(LARGEST), Val(!REV), Val(false), Val(true), Val(true)
             )
 

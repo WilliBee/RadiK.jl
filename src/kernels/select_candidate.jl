@@ -71,9 +71,9 @@ global_count = [3]  # Found 3 elements in bin 5
 ```
 """
 @kernel function select_candidate_kernel!(
-    data_in::AbstractArray{T},
     data_out::AbstractArray{T},
     global_counts::AbstractArray{Int32},
+    data_in::AbstractArray{T},
     bin_ids::AbstractArray{Int32},
     task_lens::AbstractArray{Int32},
     stride::Int32,
@@ -238,9 +238,9 @@ to prevent shared memory overflow.
   clustered/continuous values, many concurrent tasks, or memory bandwidth bottlenecks
 """
 @kernel function select_candidate_ex_kernel!(
-    data_in::AbstractArray{T},
     data_out::AbstractArray{T},
     global_counts::AbstractArray{Int32},
+    data_in::AbstractArray{T},
     bin_ids::AbstractArray{Int32},
     task_offsets::AbstractArray{Int32},
     ::Val{LEFT},
@@ -433,9 +433,9 @@ println("Filtered count: ", Array(global_counts)[1])
 - [`select_bin!`](@ref): Find bin containing k-th element
 """
 function select_candidate!(
-    data_in::AbstractArray{T},
     data_out::AbstractArray{T},
     global_counts::AbstractArray{Int32},
+    data_in::AbstractArray{T},
     bin_ids::AbstractArray{Int32},
     task_lens::AbstractArray{Int32},
     stride::Int32;
@@ -452,7 +452,7 @@ function select_candidate!(
     global_counts .= 0
 
     select_candidate_kernel!(backend, threads_per_block)(
-        data_in, data_out, global_counts, bin_ids, task_lens, stride,
+        data_out, global_counts, data_in, bin_ids, task_lens, stride,
         Val(LEFT), Val(RIGHT), Val(threads_per_block);
         ndrange=(num_blocks * threads_per_block, num_tasks)
     )
@@ -512,9 +512,9 @@ println("Task 3 filtered: ", Array(global_counts)[3])
 - [`count_bin_ex!`](@ref): Build histogram with vectorization
 """
 function select_candidate_ex!(
-    data_in::AbstractArray{T},
     data_out::AbstractArray{T},
     global_counts::AbstractArray{Int32},
+    data_in::AbstractArray{T},
     bin_ids::AbstractArray{Int32},
     task_offsets::AbstractArray{Int32};
     LEFT::Int = 0,
@@ -535,7 +535,7 @@ function select_candidate_ex!(
     kernel! = select_candidate_ex_kernel!(backend, threads_per_block)
 
     kernel!(
-        data_in, data_out, global_counts, bin_ids, task_offsets,
+        data_out, global_counts, data_in, bin_ids, task_offsets,
         Val(LEFT), Val(RIGHT), Val(threads_per_block), Val(pack_size),
         Val(with_scale), Val(largest);
         ndrange=(threads_per_block * blocks_x, num_tasks)

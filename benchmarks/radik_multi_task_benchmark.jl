@@ -63,7 +63,7 @@ for (i, pow_2) in enumerate(N_powers_a)
     indices_out = KA.zeros(backend, Int32, Int(K_a), Int(BATCH_a))
 
     # Warm-up
-    topk_radix_select!(data, result, Int32(K_a), ws, indices_in, indices_out, task_lens, Val(LARGEST), Val(!REV), Val(false), Val(true), Val(true))
+    topk_radix_select!(result, indices_out, ws, data, indices_in, task_lens, Int32(K_a), Val(LARGEST), Val(!REV), Val(false), Val(true), Val(true))
 
     # Collect burst and steady timings
     burst_t = []
@@ -72,7 +72,7 @@ for (i, pow_2) in enumerate(N_powers_a)
     for _ in 1:10
         rand!(data)
 
-        b = @benchmark topk_radix_select!($data, $result, Int32($K_a), $ws, $indices_in, $indices_out, $task_lens, Val($LARGEST), Val(!$REV), Val(false), Val(true), Val(true))
+        b = @benchmark topk_radix_select!($result, $indices_out, $ws, $data, $indices_in, $task_lens, Int32(K_a), Val($LARGEST), Val(!$REV), Val(false), Val(true), Val(true))
 
         push!(burst_t, minimum(b).time / 1e6)
         push!(steady_t, median(b).time / 1e6)
@@ -127,7 +127,7 @@ for (i, pow_2) in enumerate(K_powers_b)
     indices_out = KA.zeros(backend, Int32, Int(k), Int(BATCH_b))
 
     # Warm-up
-    topk_radix_select!(data, result, Int32(k), ws, indices_in, indices_out, task_lens, Val(LARGEST), Val(!REV), Val(false), Val(true), Val(true))
+    topk_radix_select!(result, indices_out, ws, data, indices_in, task_lens, Int32(k), Val(LARGEST), Val(!REV), Val(false), Val(true), Val(true))
 
     # Collect burst and steady timings
     burst_t = []
@@ -136,7 +136,7 @@ for (i, pow_2) in enumerate(K_powers_b)
     for _ in 1:10
         rand!(data)
 
-        b = @benchmark topk_radix_select!($data, $result, Int32($k), $ws, $indices_in, $indices_out, $task_lens, Val($LARGEST), Val(!$REV), Val(false), Val(true), Val(true))
+        b = @benchmark topk_radix_select!($result, $indices_out, $ws, $data, $indices_in, $task_lens, Int32($k), Val($LARGEST), Val(!$REV), Val(false), Val(true), Val(true))
 
         push!(burst_t, minimum(b).time / 1e6)
         push!(steady_t, median(b).time / 1e6)
@@ -191,7 +191,7 @@ for (i, pow_2) in enumerate(BATCH_powers_c)
     indices_out = KA.zeros(backend, Int32, Int(K_c), Int(batch_size))
 
     # Warm-up
-    topk_radix_select!(data, result, Int32(K_c), ws, indices_in, indices_out, task_lens, Val(LARGEST), Val(!REV), Val(false), Val(true), Val(true))
+    topk_radix_select!(result, indices_out, ws, data, indices_in, task_lens, Int32(K_c), Val(LARGEST), Val(!REV), Val(false), Val(true), Val(true))
 
     # Collect burst and steady timings
     burst_t = []
@@ -200,7 +200,7 @@ for (i, pow_2) in enumerate(BATCH_powers_c)
     for _ in 1:10
         rand!(data)
 
-        b = @benchmark topk_radix_select!($data, $result, Int32($K_c), $ws, $indices_in, $indices_out, $task_lens, Val($LARGEST), Val(!$REV), Val(false), Val(true), Val(true))
+        b = @benchmark topk_radix_select!($result, $indices_out, $ws, $data, $indices_in, $task_lens, Int32(K_c), Val($LARGEST), Val(!$REV), Val(false), Val(true), Val(true))
 
         push!(burst_t, minimum(b).time / 1e6)
         push!(steady_t, median(b).time / 1e6)

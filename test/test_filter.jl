@@ -22,9 +22,10 @@ using RadiK:
         stride = Int32(length(data))
 
         # Call the kernel
+        
         filter_!(
-            data_in, idx_in, kth_element, val_out, idx_out,
-            global_counts, boundary_counts, task_offsets, stride, K;
+            val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
+            task_offsets, stride, K;
             with_scale=false, largest=true
         )
 
@@ -60,9 +61,10 @@ using RadiK:
 
         # Scaling - boundary_counts = 0
         boundary_counts = adapt(backend, Int32[0])
+        
         filter_!(
-            data_in, idx_in, kth_element, val_out, idx_out,
-            global_counts, boundary_counts, task_offsets, stride, K;
+            val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
+            task_offsets, stride, K;
             with_scale=true, largest=true
         )
 
@@ -77,9 +79,10 @@ using RadiK:
         idx_out .= 0
         global_counts = adapt(backend, Int32[0])
         boundary_counts = adapt(backend, Int32[1])
+        
         filter_!(
-            data_in, idx_in, kth_element, val_out, idx_out,
-            global_counts, boundary_counts, task_offsets, stride, K;
+            val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
+            task_offsets, stride, K;
             with_scale=true, largest=true
         )
 
@@ -94,9 +97,10 @@ using RadiK:
         idx_out .= 0
         global_counts = adapt(backend, Int32[0])
         boundary_counts = adapt(backend, Int32[0])
+        
         filter_!(
-            data_in, idx_in, kth_element, val_out, idx_out,
-            global_counts, boundary_counts, task_offsets, stride, K;
+            val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
+            task_offsets, stride, K;
             with_scale=false, largest=true
         )
 
@@ -129,9 +133,10 @@ using RadiK:
 
         # Scaling - boundary_counts = 0
         boundary_counts = adapt(backend, Int32[0])
+        
         filter_!(
-            data_in, idx_in, kth_element, val_out, idx_out,
-            global_counts, boundary_counts, task_offsets, stride, K;
+            val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
+            task_offsets, stride, K;
             with_scale=true, largest=false
         )
 
@@ -146,9 +151,10 @@ using RadiK:
         idx_out .= 0
         global_counts = adapt(backend, Int32[0])
         boundary_counts = adapt(backend, Int32[1])
+        
         filter_!(
-            data_in, idx_in, kth_element, val_out, idx_out,
-            global_counts, boundary_counts, task_offsets, stride, K;
+            val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
+            task_offsets, stride, K;
             with_scale=true, largest=false
         )
 
@@ -163,9 +169,10 @@ using RadiK:
         idx_out .= 0
         global_counts = adapt(backend, Int32[0])
         boundary_counts = adapt(backend, Int32[0])
+        
         filter_!(
-            data_in, idx_in, kth_element, val_out, idx_out,
-            global_counts, boundary_counts, task_offsets, stride, K;
+            val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
+            task_offsets, stride, K;
             with_scale=false, largest=false
         )
 
@@ -180,9 +187,10 @@ using RadiK:
         idx_out .= 0
         global_counts = adapt(backend, Int32[0])
         boundary_counts = adapt(backend, Int32[1])
+        
         filter_!(
-            data_in, idx_in, kth_element, val_out, idx_out,
-            global_counts, boundary_counts, task_offsets, stride, K;
+            val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
+            task_offsets, stride, K;
             with_scale=false, largest=false
         )
 
@@ -225,9 +233,10 @@ using RadiK:
         task_offsets_gpu = adapt(backend, task_offsets)
         stride = Int32(maximum(length.([task1_data, task2_data, task3_data])))
 
+
         filter_!(
-            data_in, idx_in, kth_element, val_out, idx_out,
-            global_counts, boundary_counts, task_offsets_gpu, stride, K;
+            val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
+            task_offsets_gpu, stride, K;
             with_scale=false, largest=true
         )
 
@@ -268,8 +277,8 @@ using RadiK:
         stride = Int32(length(data))
 
         filter_general!(
-            data_in, idx_in, kth_element, val_out, idx_out,
-            global_counts, boundary_counts, task_offsets, stride, K;
+            val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
+            task_offsets, stride, K;
             with_scale=false, largest=true
         )
 
@@ -295,8 +304,8 @@ using RadiK:
         stride = Int32(length(data))
 
         filter_general!(
-            data_in, idx_in, kth_element, val_out, idx_out,
-            global_counts, boundary_counts, task_offsets, stride, K;
+            val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
+            task_offsets, stride, K;
             with_scale=false, largest=true
         )
 
@@ -330,8 +339,8 @@ using RadiK:
         # Scaling - boundary_counts = 0
         boundary_counts = adapt(backend, Int32[0])
         filter_general!(
-            data_in, idx_in, kth_element, val_out, idx_out,
-            global_counts, boundary_counts, task_offsets, stride, K;
+            val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
+            task_offsets, stride, K;
             with_scale=true, largest=true
         )
 
@@ -347,8 +356,8 @@ using RadiK:
         global_counts = adapt(backend, Int32[0])
         boundary_counts = adapt(backend, Int32[1])
         filter_general!(
-            data_in, idx_in, kth_element, val_out, idx_out,
-            global_counts, boundary_counts, task_offsets, stride, K;
+            val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
+            task_offsets, stride, K;
             with_scale=true, largest=true
         )
 
@@ -364,8 +373,8 @@ using RadiK:
         global_counts = adapt(backend, Int32[0])
         boundary_counts = adapt(backend, Int32[0])
         filter_general!(
-            data_in, idx_in, kth_element, val_out, idx_out,
-            global_counts, boundary_counts, task_offsets, stride, K;
+            val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
+            task_offsets, stride, K;
             with_scale=false, largest=true
         )
 
@@ -399,8 +408,8 @@ using RadiK:
         # Scaling - boundary_counts = 0
         boundary_counts = adapt(backend, Int32[0])
         filter_general!(
-            data_in, idx_in, kth_element, val_out, idx_out,
-            global_counts, boundary_counts, task_offsets, stride, K;
+            val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
+            task_offsets, stride, K;
             with_scale=true, largest=false
         )
 
@@ -416,8 +425,8 @@ using RadiK:
         global_counts = adapt(backend, Int32[0])
         boundary_counts = adapt(backend, Int32[1])
         filter_general!(
-            data_in, idx_in, kth_element, val_out, idx_out,
-            global_counts, boundary_counts, task_offsets, stride, K;
+            val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
+            task_offsets, stride, K;
             with_scale=true, largest=false
         )
 
@@ -433,8 +442,8 @@ using RadiK:
         global_counts = adapt(backend, Int32[0])
         boundary_counts = adapt(backend, Int32[0])
         filter_general!(
-            data_in, idx_in, kth_element, val_out, idx_out,
-            global_counts, boundary_counts, task_offsets, stride, K;
+            val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
+            task_offsets, stride, K;
             with_scale=false, largest=false
         )
 
@@ -450,8 +459,8 @@ using RadiK:
         global_counts = adapt(backend, Int32[0])
         boundary_counts = adapt(backend, Int32[1])
         filter_general!(
-            data_in, idx_in, kth_element, val_out, idx_out,
-            global_counts, boundary_counts, task_offsets, stride, K;
+            val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
+            task_offsets, stride, K;
             with_scale=false, largest=false
         )
 
@@ -491,7 +500,7 @@ using RadiK:
 
             if GENERAL
                 filter_general_kernel!(backend, threads_per_block)(
-                    data_in, idx_in, kth_element, val_out, idx_out, global_counts, boundary_counts,
+                    val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
                     task_offsets, stride, K,
                     Val(0), Val(20), Val(threads_per_block), Val(PACKSIZE),
                     Val(WITHSCALE), Val(LARGEST), Val(WITHIDXIN);
@@ -499,7 +508,7 @@ using RadiK:
                 )
             else
                 filter_kernel!(backend, threads_per_block)(
-                    data_in, idx_in, kth_element, val_out, idx_out, global_counts, boundary_counts,
+                    val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
                     task_offsets, stride, K,
                     Val(0), Val(20), Val(threads_per_block), Val(PACKSIZE), Val(1024),
                     Val(WITHSCALE), Val(LARGEST), Val(WITHIDXIN);
@@ -551,7 +560,7 @@ using RadiK:
 
             if GENERAL
                 filter_general_kernel!(backend, threads_per_block)(
-                    data_in, idx_in, kth_element, val_out, idx_out, global_counts, boundary_counts,
+                    val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
                     task_offsets, stride, Int32(K),
                     Val(0), Val(20), Val(threads_per_block), Val(PACKSIZE),
                     Val(WITHSCALE), Val(LARGEST), Val(WITHIDXIN);
@@ -559,7 +568,7 @@ using RadiK:
                 )
             else
                 filter_kernel!(backend, threads_per_block)(
-                    data_in, idx_in, kth_element, val_out, idx_out, global_counts, boundary_counts,
+                    val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
                     task_offsets, stride, Int32(K),
                     Val(0), Val(20), Val(threads_per_block), Val(PACKSIZE), Val(1024),
                     Val(WITHSCALE), Val(LARGEST), Val(WITHIDXIN);
@@ -597,9 +606,10 @@ using RadiK:
         task_offsets = adapt(backend, Int32[0, length(data)])
         stride = Int32(length(data))
 
+
         filter_!(
-            data_in, idx_in, kth_element, val_out, idx_out,
-            global_counts, boundary_counts, task_offsets, stride, K;
+            val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
+            task_offsets, stride, K;
             with_scale=false, largest=true, with_idx_in=true
         )
 
@@ -623,8 +633,8 @@ using RadiK:
         boundary_counts = adapt(backend, Int32[K])
 
         filter_general!(
-            data_in, idx_in, kth_element, val_out, idx_out,
-            global_counts, boundary_counts, task_offsets, stride, K;
+            val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
+            task_offsets, stride, K;
             with_scale=false, largest=true, with_idx_in=true
         )
 
@@ -661,18 +671,19 @@ using RadiK:
             task_offsets = adapt(backend, Int32[0, length(data)])
             stride = Int32(length(data))
 
-            filter_!(
-                data_in, idx_in, kth_element, val_out, idx_out,
-                global_counts, boundary_counts, task_offsets, stride, K;
-                with_scale=false, largest=true
-            )
+            
+        filter_!(
+            val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
+            task_offsets, stride, K;
+            with_scale=false, largest=true
+        )
 
             count = Array(global_counts)[1]
             @test count == 0
 
             filter_general!(
-                data_in, idx_in, kth_element, val_out, idx_out,
-                global_counts, boundary_counts, task_offsets, stride, K;
+                val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
+                task_offsets, stride, K;
                 with_scale=false, largest=true
             )
 
@@ -695,11 +706,12 @@ using RadiK:
             task_offsets = adapt(backend, Int32[0, length(data)])
             stride = Int32(length(data))
 
-            filter_!(
-                data_in, idx_in, kth_element, val_out, idx_out,
-                global_counts, boundary_counts, task_offsets, stride, K;
-                with_scale=false, largest=true
-            )
+            
+        filter_!(
+            val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
+            task_offsets, stride, K;
+            with_scale=false, largest=true
+        )
 
             count = Array(global_counts)[1]
             filtered_vals = Array(val_out)[1:count]
@@ -714,8 +726,8 @@ using RadiK:
             boundary_counts = adapt(backend, Int32[3])
 
             filter_general!(
-                data_in, idx_in, kth_element, val_out, idx_out,
-                global_counts, boundary_counts, task_offsets, stride, K;
+                val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
+                task_offsets, stride, K;
                 with_scale=false, largest=true
             )
 

@@ -80,7 +80,7 @@ function RadiKWorkspace(backend, n, num_tasks, ::Type{T}=Int, ::Type{ValT}=Float
 end
 
 """
-    topk_radix_select!(val_in, val_out, k; ...)
+    topk_radix_select!(val_out, idx_out, ws, val_in, idx_in, task_lens, k; ...)
 
 Main entry point for radix-based top-k selection.
 
@@ -92,13 +92,13 @@ Main entry point for radix-based top-k selection.
 - `Val{WITHPACKING}`: Whether to use vectorized loads (compile-time)
 
 # Arguments
+- `val_out`: Output array for top-k results (mutated)
+- `idx_out`: Output array for indices (mutated)
+- `ws`: Pre-allocated RadiKWorkspace for memory reuse (mutated)
 - `val_in`: Input data array (AbstractArray{Float32})
-- `val_out`: Output array for top-k results
-- `k`: Number of top elements to select (Int32)
-- `ws`: Pre-allocated RadiKWorkspace for memory reuse
 - `idx_in`: Input indices array (for index tracking)
-- `idx_out`: Output array for indices
 - `task_lens`: Task lengths for multi-task batch processing
+- `k`: Number of top elements to select (Int32)
 
 # Returns
 - `val_out`: Array containing top-k elements (sorted)
@@ -112,7 +112,7 @@ result = CUDA.zeros(Float32, 100)
 idx_in = CUDA.zeros(Int32, 10000)
 idx_out = CUDA.zeros(Int32, 100)
 ws = RadiKWorkspace(CUDABackend(), 10000, 1)
-topk_radix_select!(data, result, Int32(100), ws, idx_in, idx_out, Int32[10000])
+topk_radix_select!(result, idx_out, ws, data, idx_in, Int32[10000], Int32(100))
 
 # Single task with workspace reuse (avoid allocation overhead)
 ws = RadiKWorkspace(CUDABackend(), 10000, 1)
@@ -122,7 +122,7 @@ idx_out = CUDA.zeros(Int32, 100)
 
 for i in 1:100
     data = CUDA.randn(Float32, 10000)
-    topk_radix_select!(data, result, Int32(100), ws, idx_in, idx_out, Int32[10000])
+    topk_radix_select!(result, idx_out, ws, data, idx_in, Int32[10000], Int32(100))
 end
 
 # Multi-task processing with workspace reuse
@@ -131,7 +131,7 @@ data = CUDA.randn(Float32, 10000)
 result = CUDA.zeros(Float32, 100, 4)
 idx_in = CUDA.collect(Int32(1):Int32(10000))
 idx_out = CUDA.zeros(Int32, 100, 4)
-topk_radix_select!(data, result, Int32(100), ws, idx_in, idx_out, Int32.[5000, 6000, 4000, 5500])
+topk_radix_select!(result, idx_out, ws, data, idx_in, Int32.[5000, 6000, 4000, 5500], Int32(100))
 ```
 
 # Workspace Reuse
@@ -141,13 +141,13 @@ When reusing a workspace across calls:
 - Different `k` values are allowed across calls
 """
 function topk_radix_select!(
-    val_in::AbstractArray{ValT},
     val_out::AbstractArray{ValT},
-    k::Int32,
-    ws::RadiKWorkspace,
-    idx_in::AbstractArray{IdxT},
     idx_out::AbstractArray{IdxT},
+    ws::RadiKWorkspace,
+    val_in::AbstractArray{ValT},
+    idx_in::AbstractArray{IdxT},
     task_lens::AbstractVector{T},
+    k::Int32,
     ::Val{LARGEST}=Val(true),
     ::Val{ASCEND}=Val(true),
     ::Val{WITHSCALE}=Val(false),
@@ -205,7 +205,7 @@ function topk_radix_select!(
         ndrange=(grid_size_x * 1024, grid_size_y))
 
     select_bin_kernel!(backend, 512)(
-        histogram, bin_ids, k_values, task_len_buffer_2,
+        bin_ids, k_values, task_len_buffer_2, histogram,
         Val(LARGEST), Val(512), Val(4096), Val(8), Val(WARP_SIZE);
         ndrange=num_tasks * 512)
 
@@ -213,7 +213,7 @@ function topk_radix_select!(
     grid_size_y = min(MAX_GRID_SIZE ÷ grid_size_x, num_tasks)
 
     select_candidate_ex_kernel!(backend, 256)(
-        val_in, val_buffer_2, global_count, bin_ids, task_offsets,
+        val_buffer_2, global_count, val_in, bin_ids, task_offsets,
         Val(0), Val(20), Val(256), Val(pack_size), Val(WITHSCALE), Val(LARGEST);
         ndrange=(grid_size_x * 256, grid_size_y))
 
@@ -237,13 +237,13 @@ function topk_radix_select!(
             ndrange=(grid_size * 1024, num_tasks))
 
         select_bin_kernel!(backend, 512)(
-            histogram, bin_ids, k_values, task_len_buffer_1,
+            bin_ids, k_values, task_len_buffer_1, histogram,
             Val(LARGEST), Val(512), Val(4096), Val(8), Val(WARP_SIZE);
             ndrange=num_tasks * 512)
 
         grid_size = cld(max_task_len, 256)
         select_candidate_kernel!(backend, 256)(
-            val_buffer_2, val_buffer_1, global_count, bin_ids, task_len_buffer_2, stride,
+            val_buffer_1, global_count, val_buffer_2, bin_ids, task_len_buffer_2, stride,
             Val(12), Val(20), Val(256),
             ndrange=(grid_size * 256, num_tasks))
         flag = 1 - flag  # Flip flag: now candidates are in val_buffer_1
@@ -268,12 +268,12 @@ function topk_radix_select!(
             ndrange=(grid_size * 256, num_tasks))
 
         select_bin_kernel!(backend, 256)(
-            histogram, bin_ids, k_values, task_len_buffer_2,
+            bin_ids, k_values, task_len_buffer_2, histogram,
             Val(LARGEST), Val(256), Val(256), Val(1), Val(WARP_SIZE);
             ndrange=num_tasks * 256)
 
         select_candidate_kernel!(backend, 256)(
-            val_buffer_1, val_buffer_2, global_count, bin_ids, task_len_buffer_1, stride,
+            val_buffer_2, global_count, val_buffer_1, bin_ids, task_len_buffer_1, stride,
             Val(24), Val(24), Val(256),
             ndrange=(grid_size * 256, num_tasks))
         flag = 1 - flag  # Flip flag: now candidates are in val_buffer_2
@@ -303,14 +303,14 @@ function topk_radix_select!(
             cache_size = 1024
         end
         filter_kernel!(backend, 256)(
-            val_in, idx_in, kth_element, val_out, idx_out,
-            global_count, k_values, task_offsets, stride, k,
+            val_out, idx_out, global_count, k_values, val_in, idx_in,
+            kth_element, task_offsets, stride, k,
             Val(0), Val(20), Val(256), Val(pack_size), Val(cache_size), Val(WITHSCALE), Val(LARGEST), Val(WITHIDXIN),
             ndrange=(grid_size_x * 256, grid_size_y))
     else
         filter_general_kernel!(backend, 256)(
-            val_in, idx_in, kth_element, val_out, idx_out,
-            global_count, k_values, task_offsets, stride, k,
+            val_out, idx_out, global_count, k_values, val_in, idx_in,
+            kth_element, task_offsets, stride, k,
             Val(0), Val(20), Val(256), Val(pack_size), Val(WITHSCALE), Val(LARGEST), Val(WITHIDXIN),
             ndrange=(grid_size_x * 256, grid_size_y))
     end
@@ -391,6 +391,6 @@ function topk(data::AbstractArray{ValT}, k, ::Type{IxT}=Int32; largest=true, rev
     indices = KA.zeros(backend, IxT, k)
 
     # Call main algorithm
-    topk_radix_select!(data, result, IxT(k), ws, indices, indices, IxT[n], Val(largest), Val(!rev), Val(false), Val(false), Val(true))
+    topk_radix_select!(result, indices, ws, data, indices, IxT[n], IxT(k), Val(largest), Val(!rev), Val(false), Val(false), Val(true))
     return result, indices
 end

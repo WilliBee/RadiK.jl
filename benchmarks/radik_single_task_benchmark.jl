@@ -57,7 +57,7 @@ for (i, pow_2) in enumerate(N_powers)
         idx_out = similar(idx_in);
 
         # Warm-up
-        topk_radix_select!(data, result, Int32(k), ws, idx_in, idx_out, Int32[n], Val(LARGEST), Val(!REV), Val(false), Val(false), Val(true))
+        topk_radix_select!(result, idx_out, ws, data, idx_in, Int32[n], Int32(k), Val(LARGEST), Val(!REV), Val(false), Val(false), Val(true))
 
         # Correctness test
         @test Array(result) == partialsort(Array(data), 1:k, rev=true)
@@ -70,7 +70,7 @@ for (i, pow_2) in enumerate(N_powers)
                 rand!(data)
 
                 CUDA.@time topk_radix_select!(
-                        data, result, Int32(k), ws, idx_in, idx_out, Int32[n],
+                        result, idx_out, ws, data, idx_in, Int32[n], Int32(k),
                         Val(LARGEST), Val(!REV), Val(false), Val(false), Val(true))
             end
             for i in 1:20
@@ -85,7 +85,7 @@ for (i, pow_2) in enumerate(N_powers)
 
             b = @benchmark begin
                 topk_radix_select!(
-                    $data, $result, Int32($k), $ws, $idx_in, $idx_out, Int32[$n],
+                    $result, $idx_out, $ws, $data, $idx_in, Int32[$n], Int32($k),
                     Val($LARGEST), Val(!$REV), Val(false), Val(false), Val(true)
                 )
             end

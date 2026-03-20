@@ -156,13 +156,13 @@ overflow will occur if more than K elements qualify.
 - `Val{WITHIDXIN}`: Whether input indices are provided
 """
 @kernel function filter_kernel!(
-    data_in::AbstractArray{ValT},
-    idx_in::AbstractArray{IdxT},
-    kth_vals::AbstractArray{ValT},
     val_out::AbstractArray{ValT},
     idx_out::AbstractArray{IdxT},
     global_counts::AbstractArray{Int32},
     boundary_counts::AbstractArray{Int32},
+    data_in::AbstractArray{ValT},
+    idx_in::AbstractArray{IdxT},
+    kth_vals::AbstractArray{ValT},
     task_offsets::AbstractArray{Int32},
     stride::Int32,
     K::Int32,
@@ -382,13 +382,13 @@ main loop iteration for safer overflow handling at the cost of higher overhead.
 See `filter_kernel!` for parameter documentation.
 """
 @kernel function filter_general_kernel!(
-    data_in::AbstractArray{ValT},
-    idx_in::AbstractArray{IdxT},
-    kth_vals::AbstractArray{ValT},
     val_out::AbstractArray{ValT},
     idx_out::AbstractArray{IdxT},
     global_counts::AbstractArray{Int32},
     boundary_counts::AbstractArray{Int32},
+    data_in::AbstractArray{ValT},
+    idx_in::AbstractArray{IdxT},
+    kth_vals::AbstractArray{ValT},
     task_offsets::AbstractArray{Int32},
     stride::Int32,
     K::Int32,
@@ -643,13 +643,13 @@ Convenience wrapper for `filter_kernel!`. Filters elements by k-th element thres
 K ≤ 1024 (use `filter_general!` for larger K).
 """
 function filter_!(
-    data_in::AbstractArray{ValT},
-    idx_in::AbstractArray{IdxT},
-    kth_element::AbstractArray{ValT},
     val_out::AbstractArray{ValT},
     idx_out::AbstractArray{IdxT},
     global_counts::AbstractArray{Int32},
     boundary_counts::AbstractArray{Int32},
+    data_in::AbstractArray{ValT},
+    idx_in::AbstractArray{IdxT},
+    kth_element::AbstractArray{ValT},
     task_offsets::AbstractArray{Int32},
     stride::Int32,
     K::Int32;
@@ -681,7 +681,7 @@ function filter_!(
     kernel! = filter_kernel!(backend, threads_per_block)
 
     kernel!(
-        data_in, idx_in, kth_element, val_out, idx_out, global_counts, boundary_counts,
+        val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
         task_offsets, stride, K,
         Val(LEFT), Val(RIGHT), Val(threads_per_block), Val(pack_size), Val(cachesize),
         Val(with_scale), Val(largest), Val(with_idx_in);
@@ -702,13 +702,13 @@ cache flushing to prevent overflow.
 Same parameters as `filter!`. Use when K > 1024.
 """
 function filter_general!(
-    data_in::AbstractArray{ValT},
-    idx_in::AbstractArray{IdxT},
-    kth_element::AbstractArray{ValT},
     val_out::AbstractArray{ValT},
     idx_out::AbstractArray{IdxT},
     global_counts::AbstractArray{Int32},
     boundary_counts::AbstractArray{Int32},
+    data_in::AbstractArray{ValT},
+    idx_in::AbstractArray{IdxT},
+    kth_element::AbstractArray{ValT},
     task_offsets::AbstractArray{Int32},
     stride::Int32,
     K::Int32;
@@ -727,7 +727,7 @@ function filter_general!(
     kernel! = filter_general_kernel!(backend, threads_per_block)
 
     kernel!(
-        data_in, idx_in, kth_element, val_out, idx_out, global_counts, boundary_counts,
+        val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
         task_offsets, stride, K,
         Val(LEFT), Val(RIGHT), Val(threads_per_block), Val(pack_size),
         Val(with_scale), Val(largest), Val(with_idx_in);
