@@ -25,7 +25,7 @@ BitonicSort = {url = "https://github.com/WilliBee/BitonicSort.jl.git"}
 [compat]
 Adapt = "4.4.0"
 Atomix = "1.1.2"
-BitonicSort = "0.1.0"
+BitonicSort = "0.1.1"
 CUDA = "5.9.6"
 KernelIntrinsics = "0.1.5"
 PrettyTables = "3.2.3"
