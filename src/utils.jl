@@ -5,9 +5,6 @@
 
 import KernelAbstractions.Extras: @unroll
 
-
-@inline _compute_hist_len(::Type{T}, RIGHT) where {T} = 1 << (8 * sizeof(T) - RIGHT)
-
 """
     get_bin_id(val::Float32, ::Val{LEFT}, ::Val{RIGHT}) -> Int32
 

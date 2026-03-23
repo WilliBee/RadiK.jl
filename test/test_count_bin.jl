@@ -1,5 +1,4 @@
 using RadiK: 
-    _compute_hist_len,
     sample_scaler,
     apply_scaling,
     get_bin_id,
@@ -22,7 +21,7 @@ using RadiK:
     # Parameters
     LEFT = 0
     RIGHT = 30
-    hist_len = _compute_hist_len(Float32, RIGHT)
+    hist_len =1 << (8 * sizeof(Float32) - RIGHT)
 
     # ========================================
     # Test count_bin_ex_kernel!

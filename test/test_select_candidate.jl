@@ -1,7 +1,7 @@
 using RadiK:
-    select_candidate!,
-    get_bin_id,
-    select_candidate_ex!
+    select_candidate_kernel!,
+    select_candidate_ex_kernel!,
+    get_bin_id
 
 @testset "Test select_candidate.jl" begin
 
@@ -9,7 +9,7 @@ using RadiK:
     # select_candidate!
     # ==============================================================================
 
-    @testset "select_candidate! - Single task simple filter" begin
+    @testset "select_candidate_kernel! - Single task simple filter" begin
         data = Float32.(1:10)
         data_in = adapt(backend, data)
         data_out = KA.zeros(backend, Float32, length(data))
@@ -18,24 +18,36 @@ using RadiK:
         stride = Int32(length(data))
         LEFT = 0
         RIGHT = 23
+        threads_per_block = 4
 
         # Get the bin ID for value 3.0 (the value we want to filter)
         target_bin = get_bin_id(Float32(3.0), Val(LEFT), Val(RIGHT)) + 1    # 1-based
         bin_ids = adapt(backend, Int32[target_bin])
 
-        select_candidate!(data_out, global_counts, data_in, bin_ids, task_lens, stride;
-            LEFT=LEFT, RIGHT=RIGHT, threads_per_block=4
+        num_tasks = length(task_lens)
+        max_task_len = maximum(Array(task_lens))
+        num_blocks = cld(max_task_len, threads_per_block)
+
+        data_out .= 0
+        global_counts .= 0
+
+        kernel! = select_candidate_kernel!(backend, threads_per_block)
+        kernel!(
+            data_out, global_counts, data_in, bin_ids, task_lens, stride,
+            Val(LEFT), Val(RIGHT), Val(threads_per_block);
+            ndrange=(num_blocks * threads_per_block, num_tasks)
         )
+        KA.synchronize(backend)
 
         count = Array(global_counts)[1]
         filtered_data = Array(data_out)
-        
+
 
         @test count == 2
         @test Set(filtered_data[1:count]) == Set([2.0, 3.0])
     end
 
-    @testset "select_candidate! - Multiple tasks" begin
+    @testset "select_candidate_kernel! - Multiple tasks" begin
         # Task 1: values 1-10
         # Task 2: values 11-20
         # Task 3: values 21-30
@@ -61,13 +73,27 @@ using RadiK:
         # Task 2: filter bin for value 15
         # Task 3: filter bin for value 25
         bin1_id = get_bin_id(Float32(3.0), Val(0), Val(20)) + 1
-        bin2_id = get_bin_id(Float32(15.0), Val(0), Val(20)) + 1 
+        bin2_id = get_bin_id(Float32(15.0), Val(0), Val(20)) + 1
         bin3_id = get_bin_id(Float32(25.0), Val(0), Val(20)) + 1
         bin_ids = adapt(backend, Int32[bin1_id, bin2_id, bin3_id])
 
-        select_candidate!(data_out, global_counts, data_in, bin_ids, task_lens, Int32(stride);
-            LEFT=0, RIGHT=20, threads_per_block=8
+        LEFT = 0
+        RIGHT = 20
+        threads_per_block = 8
+
+        max_task_len = maximum(Array(task_lens))
+        num_blocks = cld(max_task_len, threads_per_block)
+
+        data_out .= 0
+        global_counts .= 0
+
+        kernel! = select_candidate_kernel!(backend, threads_per_block)
+        kernel!(
+            data_out, global_counts, data_in, bin_ids, task_lens, Int32(stride),
+            Val(LEFT), Val(RIGHT), Val(threads_per_block);
+            ndrange=(num_blocks * threads_per_block, num_tasks)
         )
+        KA.synchronize(backend)
 
         counts = Array(global_counts)
         bin_ids_cpu = Array(bin_ids)
@@ -88,7 +114,7 @@ using RadiK:
         @test 25.0f0 in task3_output
     end
 
-    @testset "select_candidate! - Various block sizes" begin
+    @testset "select_candidate_kernel! - Various block sizes" begin
         data = Float32.(1:20)
         data_in = adapt(backend, data)
         data_out = KA.zeros(backend, Float32, length(data))
@@ -101,8 +127,20 @@ using RadiK:
         bin_ids = adapt(backend, Int32[target_bin])
 
         for threads_per_block in [1, 2, 4, 8, 16, 32]
-            select_candidate!(data_out, global_counts, data_in, bin_ids, task_lens, stride;
-                            LEFT=0, RIGHT=20, threads_per_block=threads_per_block)
+            num_tasks = length(task_lens)
+            max_task_len = maximum(Array(task_lens))
+            num_blocks = cld(max_task_len, threads_per_block)
+
+            data_out .= 0
+            global_counts .= 0
+
+            kernel! = select_candidate_kernel!(backend, threads_per_block)
+            kernel!(
+                data_out, global_counts, data_in, bin_ids, task_lens, stride,
+                Val(0), Val(20), Val(threads_per_block);
+                ndrange=(num_blocks * threads_per_block, num_tasks)
+            )
+            KA.synchronize(backend)
 
             count = Array(global_counts)[1]
             filtered_data = Array(data_out)
@@ -112,7 +150,7 @@ using RadiK:
         end
     end
 
-    @testset "select_candidate! - Edge cases" begin
+    @testset "select_candidate_kernel! - Edge cases" begin
         # Empty task (no elements)
         data_in = adapt(backend, Float32[])
         data_out = KA.zeros(backend, Float32, 0)
@@ -123,14 +161,27 @@ using RadiK:
         target_bin = get_bin_id(Float32(1.0), Val(0), Val(20)) + 1
         bin_ids = adapt(backend, Int32[target_bin])
 
+        threads_per_block = 4
+        num_tasks = length(task_lens)
+        max_task_len = maximum(Array(task_lens))
+        num_blocks = cld(max_task_len, threads_per_block)
+
+        data_out .= 0
+        global_counts .= 0
+
         # Should not crash
-        select_candidate!(data_out, global_counts, data_in, bin_ids, task_lens, stride;
-                        LEFT=0, RIGHT=20, threads_per_block=4)
+        kernel! = select_candidate_kernel!(backend, threads_per_block)
+        kernel!(
+            data_out, global_counts, data_in, bin_ids, task_lens, stride,
+            Val(0), Val(20), Val(threads_per_block);
+            ndrange=(num_blocks * threads_per_block, num_tasks)
+        )
+        KA.synchronize(backend)
 
         @test Array(global_counts)[1] == 0
     end
 
-    @testset "select_candidate! - Correctness vs CPU" begin
+    @testset "select_candidate_kernel! - Correctness vs CPU" begin
         # Create test data with known distribution
         data = Float32.(1:30)
         stride = 30
@@ -154,8 +205,21 @@ using RadiK:
         task_lens = adapt(backend, Int32[length(data)])
         bin_ids = adapt(backend, Int32[target_bin])
 
-        select_candidate!(data_out, global_counts, data_in, bin_ids, task_lens, Int32(stride);
-                        LEFT=0, RIGHT=20, threads_per_block=8)
+        threads_per_block = 8
+        num_tasks = length(task_lens)
+        max_task_len = maximum(Array(task_lens))
+        num_blocks = cld(max_task_len, threads_per_block)
+
+        data_out .= 0
+        global_counts .= 0
+
+        kernel! = select_candidate_kernel!(backend, threads_per_block)
+        kernel!(
+            data_out, global_counts, data_in, bin_ids, task_lens, Int32(stride),
+            Val(0), Val(20), Val(threads_per_block);
+            ndrange=(num_blocks * threads_per_block, num_tasks)
+        )
+        KA.synchronize(backend)
 
         gpu_count = Array(global_counts)[1]
         gpu_filtered = Array(data_out)[1:gpu_count]
@@ -168,10 +232,10 @@ using RadiK:
     end
 
     # ==============================================================================
-    # Tests for select_candidate_ex! (with vectorization and scaling)
+    # Tests for select_candidate_ex_kernel! (with vectorization and scaling)
     # ==============================================================================
 
-    @testset "select_candidate_ex! - Multiple tasks, with/without scaling" begin
+    @testset "select_candidate_ex_kernel! - Multiple tasks, with/without scaling" begin
         # Create 3 tasks with different sizes
         task1_data = Float32.(1:2800)
         task2_data = Float32.(2801:5500)
@@ -185,7 +249,12 @@ using RadiK:
 
         data_out = KA.zeros(backend, Float32, maximum(length.(data_array)), 3)
         global_counts = KA.zeros(backend, Int32, 3)
-        
+
+        threads_per_block = 64
+        blocks_x = 16
+        pack_size = 4
+        num_tasks = 3
+
         for SCALE in (true, false)
             offset_1 = SCALE ? first(task1_data) : 0
             offset_2 = SCALE ? first(task2_data) : 0
@@ -197,10 +266,17 @@ using RadiK:
             ]
             bin_ids_gpu = adapt(backend, bin_ids)
 
-            select_candidate_ex!(data_out, global_counts, data_in, bin_ids_gpu, task_offsets_gpu,
-                LEFT=0, RIGHT=20, threads_per_block=64, blocks_x=16,
-                pack_size=4, with_scale=SCALE, largest=true
+            data_out .= 0
+            global_counts .= 0
+
+            kernel! = select_candidate_ex_kernel!(backend, threads_per_block)
+            kernel!(
+                data_out, global_counts, data_in, bin_ids_gpu, task_offsets_gpu,
+                Val(0), Val(20), Val(threads_per_block), Val(pack_size),
+                Val(SCALE), Val(true);
+                ndrange=(threads_per_block * blocks_x, num_tasks)
             )
+            KA.synchronize(backend)
 
             counts = Array(global_counts)
 
@@ -224,7 +300,7 @@ using RadiK:
         end
     end
 
-    @testset "select_candidate_ex! - Various pack sizes" begin
+    @testset "select_candidate_ex_kernel! - Various pack sizes" begin
         data = Float32.(1:64)
         task_offsets = Int32[0, length(data)]
 
@@ -234,11 +310,23 @@ using RadiK:
         bin_ids = adapt(backend, Int32[get_bin_id(data[1], Val(0), Val(20)) + 1])
         task_offsets_gpu = adapt(backend, task_offsets)
 
+        threads_per_block = 32
+        blocks_x = 16
+        num_tasks = 1
+
         for pack_size in [2, 4, 8, 16]
-            select_candidate_ex!(data_out, global_counts, data_in, bin_ids, task_offsets_gpu,
-                LEFT=0, RIGHT=20, threads_per_block=32, blocks_x=16,
-                pack_size=pack_size, with_scale=false, largest=true
+            data_out .= 0
+            global_counts .= 0
+
+            kernel! = select_candidate_ex_kernel!(backend, threads_per_block)
+            kernel!(
+                data_out, global_counts, data_in, bin_ids, task_offsets_gpu,
+                Val(0), Val(20), Val(threads_per_block), Val(pack_size),
+                Val(false), Val(true);
+                ndrange=(threads_per_block * blocks_x, num_tasks)
             )
+            KA.synchronize(backend)
+
             count = Array(global_counts)[1]
             @test count > 0
         end

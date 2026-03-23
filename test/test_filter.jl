@@ -1,8 +1,7 @@
 using RadiK:
     filter_kernel!,
     filter_general_kernel!,
-    filter_!,
-    filter_general!
+    select_cache_size
 
 @testset "Test filter.jl" begin
 
@@ -19,15 +18,25 @@ using RadiK:
         global_counts = adapt(backend, Int32[0])
         boundary_counts = adapt(backend, Int32[0])
         task_offsets = adapt(backend, Int32[0, length(data)])
-        stride = Int32(length(data))
 
         # Call the kernel
-        
-        filter_!(
+        threads_per_block = 256
+        blocks_x = 16
+        pack_size = 4
+        num_tasks = 1
+        LEFT = 0
+        RIGHT = 20
+        cache_size = select_cache_size(K)
+
+        kernel! = filter_kernel!(backend, threads_per_block)
+        kernel!(
             val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
-            task_offsets, stride, K;
-            with_scale=false, largest=true
+            task_offsets, K,
+            Val(LEFT), Val(RIGHT), Val(threads_per_block), Val(pack_size), Val(cache_size),
+            Val(false), Val(true), Val(false);
+            ndrange=(threads_per_block * blocks_x, num_tasks)
         )
+        KA.synchronize(backend)
 
         # Verify results
         count = Array(global_counts)[1]
@@ -39,7 +48,7 @@ using RadiK:
         @test Set(filtered_idxs) == Set(Int32.(1:1000))
     end
 
-    @testset "filter! - Single task - Largest" begin
+    @testset "filter_kernel! - Single task - Largest" begin
         data = Float32.(1:1000)
         K = Int32(5)
 
@@ -57,16 +66,27 @@ using RadiK:
         global_counts = adapt(backend, Int32[0])
         boundary_counts = adapt(backend, Int32[0])
         task_offsets = adapt(backend, Int32[0, length(data)])
-        stride = Int32(length(data))
+
+        threads_per_block = 256
+        blocks_x = 16
+        pack_size = 4
+        num_tasks = 1
+        LEFT = 0
+        RIGHT = 20
+        cache_size = select_cache_size(K)
 
         # Scaling - boundary_counts = 0
         boundary_counts = adapt(backend, Int32[0])
-        
-        filter_!(
+
+        kernel! = filter_kernel!(backend, threads_per_block)
+        kernel!(
             val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
-            task_offsets, stride, K;
-            with_scale=true, largest=true
+            task_offsets, K,
+            Val(LEFT), Val(RIGHT), Val(threads_per_block), Val(pack_size), Val(cache_size),
+            Val(true), Val(true), Val(false);
+            ndrange=(threads_per_block * blocks_x, num_tasks)
         )
+        KA.synchronize(backend)
 
         count = Array(global_counts)[1]
         filtered_vals = Array(val_out)[1:count]
@@ -79,12 +99,15 @@ using RadiK:
         idx_out .= 0
         global_counts = adapt(backend, Int32[0])
         boundary_counts = adapt(backend, Int32[1])
-        
-        filter_!(
+
+        kernel!(
             val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
-            task_offsets, stride, K;
-            with_scale=true, largest=true
+            task_offsets, K,
+            Val(LEFT), Val(RIGHT), Val(threads_per_block), Val(pack_size), Val(cache_size),
+            Val(true), Val(true), Val(false);
+            ndrange=(threads_per_block * blocks_x, num_tasks)
         )
+        KA.synchronize(backend)
 
         count = Array(global_counts)[1]
         filtered_vals = Array(val_out)[1:count]
@@ -97,12 +120,15 @@ using RadiK:
         idx_out .= 0
         global_counts = adapt(backend, Int32[0])
         boundary_counts = adapt(backend, Int32[0])
-        
-        filter_!(
+
+        kernel!(
             val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
-            task_offsets, stride, K;
-            with_scale=false, largest=true
+            task_offsets, K,
+            Val(LEFT), Val(RIGHT), Val(threads_per_block), Val(pack_size), Val(cache_size),
+            Val(false), Val(true), Val(false);
+            ndrange=(threads_per_block * blocks_x, num_tasks)
         )
+        KA.synchronize(backend)
 
         count = Array(global_counts)[1]
         filtered_vals = Array(val_out)[1:count]
@@ -111,7 +137,7 @@ using RadiK:
         @test Set(filtered_vals) == Set(Float32[1000, 999, 998, 997, 996])
     end
 
-    @testset "filter! - Single task - Smallest" begin
+    @testset "filter_kernel! - Single task - Smallest" begin
         data = Float32.(1:1000)
         K = Int32(5)
 
@@ -129,16 +155,27 @@ using RadiK:
         global_counts = adapt(backend, Int32[0])
         boundary_counts = adapt(backend, Int32[0])
         task_offsets = adapt(backend, Int32[0, length(data)])
-        stride = Int32(length(data))
+
+        threads_per_block = 256
+        blocks_x = 16
+        pack_size = 4
+        num_tasks = 1
+        LEFT = 0
+        RIGHT = 20
+        cache_size = select_cache_size(K)
+        kernel! = filter_kernel!(backend, threads_per_block)
 
         # Scaling - boundary_counts = 0
         boundary_counts = adapt(backend, Int32[0])
-        
-        filter_!(
+
+        kernel!(
             val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
-            task_offsets, stride, K;
-            with_scale=true, largest=false
+            task_offsets, K,
+            Val(LEFT), Val(RIGHT), Val(threads_per_block), Val(pack_size), Val(cache_size),
+            Val(true), Val(false), Val(false);
+            ndrange=(threads_per_block * blocks_x, num_tasks)
         )
+        KA.synchronize(backend)
 
         count = Array(global_counts)[1]
         filtered_vals = Array(val_out)[1:count]
@@ -151,12 +188,15 @@ using RadiK:
         idx_out .= 0
         global_counts = adapt(backend, Int32[0])
         boundary_counts = adapt(backend, Int32[1])
-        
-        filter_!(
+
+        kernel!(
             val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
-            task_offsets, stride, K;
-            with_scale=true, largest=false
+            task_offsets, K,
+            Val(LEFT), Val(RIGHT), Val(threads_per_block), Val(pack_size), Val(cache_size),
+            Val(true), Val(false), Val(false);
+            ndrange=(threads_per_block * blocks_x, num_tasks)
         )
+        KA.synchronize(backend)
 
         count = Array(global_counts)[1]
         filtered_vals = Array(val_out)[1:count]
@@ -169,12 +209,15 @@ using RadiK:
         idx_out .= 0
         global_counts = adapt(backend, Int32[0])
         boundary_counts = adapt(backend, Int32[0])
-        
-        filter_!(
+
+        kernel!(
             val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
-            task_offsets, stride, K;
-            with_scale=false, largest=false
+            task_offsets, K,
+            Val(LEFT), Val(RIGHT), Val(threads_per_block), Val(pack_size), Val(cache_size),
+            Val(false), Val(false), Val(false);
+            ndrange=(threads_per_block * blocks_x, num_tasks)
         )
+        KA.synchronize(backend)
 
         count = Array(global_counts)[1]
         filtered_vals = Array(val_out)[1:count]
@@ -187,12 +230,15 @@ using RadiK:
         idx_out .= 0
         global_counts = adapt(backend, Int32[0])
         boundary_counts = adapt(backend, Int32[1])
-        
-        filter_!(
+
+        kernel!(
             val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
-            task_offsets, stride, K;
-            with_scale=false, largest=false
+            task_offsets, K,
+            Val(LEFT), Val(RIGHT), Val(threads_per_block), Val(pack_size), Val(cache_size),
+            Val(false), Val(false), Val(false);
+            ndrange=(threads_per_block * blocks_x, num_tasks)
         )
+        KA.synchronize(backend)
 
         count = Array(global_counts)[1]
         filtered_vals = Array(val_out)[1:count]
@@ -202,10 +248,10 @@ using RadiK:
     end
 
     # ==============================================================================
-    # Test: filter! - Multiple tasks
+    # Test: filter_kernel! - Multiple tasks
     # ==============================================================================
 
-    @testset "filter! - Multiple tasks" begin
+    @testset "filter_kernel! - Multiple tasks" begin
         task1_data = Float32[1, 2, 3, 4, 5]
         task2_data = Float32[10, 20, 30, 40, 50]
         task3_data = Float32[100, 200, 300, 400, 500]
@@ -231,14 +277,24 @@ using RadiK:
         global_counts = KA.zeros(backend, Int32, 3)
         boundary_counts = adapt(backend, Int32[K, K, K])
         task_offsets_gpu = adapt(backend, task_offsets)
-        stride = Int32(maximum(length.([task1_data, task2_data, task3_data])))
 
+        threads_per_block = 256
+        blocks_x = 16
+        pack_size = 4
+        num_tasks = 3
+        LEFT = 0
+        RIGHT = 20
+        cache_size = select_cache_size(K)
 
-        filter_!(
+        kernel! = filter_kernel!(backend, threads_per_block)
+        kernel!(
             val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
-            task_offsets_gpu, stride, K;
-            with_scale=false, largest=true
+            task_offsets_gpu, K,
+            Val(LEFT), Val(RIGHT), Val(threads_per_block), Val(pack_size), Val(cache_size),
+            Val(false), Val(true), Val(false);
+            ndrange=(threads_per_block * blocks_x, num_tasks)
         )
+        KA.synchronize(backend)
 
         counts = Array(global_counts)
         filtered_data = Array(val_out)
@@ -259,10 +315,10 @@ using RadiK:
     end
 
     # ==============================================================================
-    # Test: filter_general! - Large K - Copy all elements
+    # Test: filter_general_kernel! - Large K - Copy all elements
     # ==============================================================================
 
-    @testset "filter_general! - Large K (K > 1024)" begin
+    @testset "filter_general_kernel! - Large K (K > 1024)" begin
         data = Float32.(1:2000)
         K = Int32(2001)
 
@@ -274,13 +330,23 @@ using RadiK:
         global_counts = adapt(backend, Int32[0])
         boundary_counts = adapt(backend, Int32[10])
         task_offsets = adapt(backend, Int32[0, length(data)])
-        stride = Int32(length(data))
 
-        filter_general!(
+        threads_per_block = 256
+        blocks_x = 16
+        pack_size = 4
+        num_tasks = 1
+        LEFT = 0
+        RIGHT = 20
+
+        kernel! = filter_general_kernel!(backend, threads_per_block)
+        kernel!(
             val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
-            task_offsets, stride, K;
-            with_scale=false, largest=true
+            task_offsets, K,
+            Val(LEFT), Val(RIGHT), Val(threads_per_block), Val(pack_size),
+            Val(false), Val(true), Val(false);
+            ndrange=(threads_per_block * blocks_x, num_tasks)
         )
+        KA.synchronize(backend)
 
         count = Array(global_counts)[1]
         filtered_vals = Array(val_out)[1:count]
@@ -289,7 +355,7 @@ using RadiK:
         @test Set(filtered_vals) == Set(data)
     end
 
-    @testset "filter_general! - Large K (K > 1024)" begin
+    @testset "filter_general_kernel! - Large K (K > 1024) - filter by threshold" begin
         data = Float32.(1:2000)
         K = Int32(1500)
 
@@ -301,13 +367,23 @@ using RadiK:
         global_counts = adapt(backend, Int32[0])
         boundary_counts = adapt(backend, Int32[0])
         task_offsets = adapt(backend, Int32[0, length(data)])
-        stride = Int32(length(data))
 
-        filter_general!(
+        threads_per_block = 256
+        blocks_x = 16
+        pack_size = 4
+        num_tasks = 1
+        LEFT = 0
+        RIGHT = 20
+
+        kernel! = filter_general_kernel!(backend, threads_per_block)
+        kernel!(
             val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
-            task_offsets, stride, K;
-            with_scale=false, largest=true
+            task_offsets, K,
+            Val(LEFT), Val(RIGHT), Val(threads_per_block), Val(pack_size),
+            Val(false), Val(true), Val(false);
+            ndrange=(threads_per_block * blocks_x, num_tasks)
         )
+        KA.synchronize(backend)
 
         count = Array(global_counts)[1]
         filtered_vals = Array(val_out)[1:count]
@@ -316,7 +392,7 @@ using RadiK:
         @test Set(filtered_vals) == Set(data[501:2000])
     end
 
-    @testset "filter_general! - Single task - Largest" begin
+    @testset "filter_general_kernel! - Single task - Largest" begin
         data = Float32.(1:10000)
         K = Int32(2000)
 
@@ -334,15 +410,26 @@ using RadiK:
         global_counts = adapt(backend, Int32[0])
         boundary_counts = adapt(backend, Int32[0])
         task_offsets = adapt(backend, Int32[0, length(data)])
-        stride = Int32(length(data))
+
+        threads_per_block = 256
+        blocks_x = 16
+        pack_size = 4
+        num_tasks = 1
+        LEFT = 0
+        RIGHT = 20
+
+        kernel! = filter_general_kernel!(backend, threads_per_block)
 
         # Scaling - boundary_counts = 0
         boundary_counts = adapt(backend, Int32[0])
-        filter_general!(
+        kernel!(
             val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
-            task_offsets, stride, K;
-            with_scale=true, largest=true
+            task_offsets, K,
+            Val(LEFT), Val(RIGHT), Val(threads_per_block), Val(pack_size),
+            Val(true), Val(true), Val(false);
+            ndrange=(threads_per_block * blocks_x, num_tasks)
         )
+        KA.synchronize(backend)
 
         count = Array(global_counts)[1]
         filtered_vals = Array(val_out)[1:count]
@@ -355,11 +442,14 @@ using RadiK:
         idx_out .= 0
         global_counts = adapt(backend, Int32[0])
         boundary_counts = adapt(backend, Int32[1])
-        filter_general!(
+        kernel!(
             val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
-            task_offsets, stride, K;
-            with_scale=true, largest=true
+            task_offsets, K,
+            Val(LEFT), Val(RIGHT), Val(threads_per_block), Val(pack_size),
+            Val(true), Val(true), Val(false);
+            ndrange=(threads_per_block * blocks_x, num_tasks)
         )
+        KA.synchronize(backend)
 
         count = Array(global_counts)[1]
         filtered_vals = Array(val_out)[1:count]
@@ -372,11 +462,14 @@ using RadiK:
         idx_out .= 0
         global_counts = adapt(backend, Int32[0])
         boundary_counts = adapt(backend, Int32[0])
-        filter_general!(
+        kernel!(
             val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
-            task_offsets, stride, K;
-            with_scale=false, largest=true
+            task_offsets, K,
+            Val(LEFT), Val(RIGHT), Val(threads_per_block), Val(pack_size),
+            Val(false), Val(true), Val(false);
+            ndrange=(threads_per_block * blocks_x, num_tasks)
         )
+        KA.synchronize(backend)
 
         count = Array(global_counts)[1]
         filtered_vals = Array(val_out)[1:count]
@@ -385,7 +478,7 @@ using RadiK:
         @test Set(filtered_vals) == Set(data[8001:10000])
     end
 
-    @testset "filter_general! - Single task - Smallest" begin
+    @testset "filter_general_kernel! - Single task - Smallest" begin
         data = Float32.(1:10000)
         K = Int32(2000)
 
@@ -403,15 +496,26 @@ using RadiK:
         global_counts = adapt(backend, Int32[0])
         boundary_counts = adapt(backend, Int32[0])
         task_offsets = adapt(backend, Int32[0, length(data)])
-        stride = Int32(length(data))
+
+        threads_per_block = 256
+        blocks_x = 16
+        pack_size = 4
+        num_tasks = 1
+        LEFT = 0
+        RIGHT = 20
+
+        kernel! = filter_general_kernel!(backend, threads_per_block)
 
         # Scaling - boundary_counts = 0
         boundary_counts = adapt(backend, Int32[0])
-        filter_general!(
+        kernel!(
             val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
-            task_offsets, stride, K;
-            with_scale=true, largest=false
+            task_offsets, K,
+            Val(LEFT), Val(RIGHT), Val(threads_per_block), Val(pack_size),
+            Val(true), Val(false), Val(false);
+            ndrange=(threads_per_block * blocks_x, num_tasks)
         )
+        KA.synchronize(backend)
 
         count = Array(global_counts)[1]
         filtered_vals = Array(val_out)[1, 1:count]
@@ -424,11 +528,14 @@ using RadiK:
         idx_out .= 0
         global_counts = adapt(backend, Int32[0])
         boundary_counts = adapt(backend, Int32[1])
-        filter_general!(
+        kernel!(
             val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
-            task_offsets, stride, K;
-            with_scale=true, largest=false
+            task_offsets, K,
+            Val(LEFT), Val(RIGHT), Val(threads_per_block), Val(pack_size),
+            Val(true), Val(false), Val(false);
+            ndrange=(threads_per_block * blocks_x, num_tasks)
         )
+        KA.synchronize(backend)
 
         count = Array(global_counts)[1]
         filtered_vals = Array(val_out)[1, 1:count]
@@ -441,11 +548,14 @@ using RadiK:
         idx_out .= 0
         global_counts = adapt(backend, Int32[0])
         boundary_counts = adapt(backend, Int32[0])
-        filter_general!(
+        kernel!(
             val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
-            task_offsets, stride, K;
-            with_scale=false, largest=false
+            task_offsets, K,
+            Val(LEFT), Val(RIGHT), Val(threads_per_block), Val(pack_size),
+            Val(false), Val(false), Val(false);
+            ndrange=(threads_per_block * blocks_x, num_tasks)
         )
+        KA.synchronize(backend)
 
         count = Array(global_counts)[1]
         filtered_vals = Array(val_out)[1, 1:count]
@@ -458,11 +568,14 @@ using RadiK:
         idx_out .= 0
         global_counts = adapt(backend, Int32[0])
         boundary_counts = adapt(backend, Int32[1])
-        filter_general!(
+        kernel!(
             val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
-            task_offsets, stride, K;
-            with_scale=false, largest=false
+            task_offsets, K,
+            Val(LEFT), Val(RIGHT), Val(threads_per_block), Val(pack_size),
+            Val(false), Val(false), Val(false);
+            ndrange=(threads_per_block * blocks_x, num_tasks)
         )
+        KA.synchronize(backend)
 
         count = Array(global_counts)[1]
         filtered_vals = Array(val_out)[1:count]
@@ -496,12 +609,11 @@ using RadiK:
             global_counts = adapt(backend, Int32[0])
             boundary_counts = adapt(backend, Int32[1])
             task_offsets = adapt(backend, Int32[0, length(data)])
-            stride = Int32(length(data))
-
+    
             if GENERAL
                 filter_general_kernel!(backend, threads_per_block)(
                     val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
-                    task_offsets, stride, K,
+                    task_offsets, K,
                     Val(0), Val(20), Val(threads_per_block), Val(PACKSIZE),
                     Val(WITHSCALE), Val(LARGEST), Val(WITHIDXIN);
                     ndrange=(threads_per_block * block_x, num_tasks)
@@ -509,7 +621,7 @@ using RadiK:
             else
                 filter_kernel!(backend, threads_per_block)(
                     val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
-                    task_offsets, stride, K,
+                    task_offsets, K,
                     Val(0), Val(20), Val(threads_per_block), Val(PACKSIZE), Val(1024),
                     Val(WITHSCALE), Val(LARGEST), Val(WITHIDXIN);
                     ndrange=(threads_per_block * block_x, num_tasks)
@@ -556,12 +668,11 @@ using RadiK:
             global_counts = KA.zeros(backend, Int32, 3)
             boundary_counts = adapt(backend, Int32[1, 1, 1])
             task_offsets = adapt(backend, task_offsets_cpu)
-            stride = Int32(maximum(length.([task1_data, task2_data, task3_data])))
-
+    
             if GENERAL
                 filter_general_kernel!(backend, threads_per_block)(
                     val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
-                    task_offsets, stride, Int32(K),
+                    task_offsets, Int32(K),
                     Val(0), Val(20), Val(threads_per_block), Val(PACKSIZE),
                     Val(WITHSCALE), Val(LARGEST), Val(WITHIDXIN);
                     ndrange=(threads_per_block * block_x, num_tasks)
@@ -569,7 +680,7 @@ using RadiK:
             else
                 filter_kernel!(backend, threads_per_block)(
                     val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
-                    task_offsets, stride, Int32(K),
+                    task_offsets, Int32(K),
                     Val(0), Val(20), Val(threads_per_block), Val(PACKSIZE), Val(1024),
                     Val(WITHSCALE), Val(LARGEST), Val(WITHIDXIN);
                     ndrange=(threads_per_block * block_x, num_tasks)
@@ -591,7 +702,7 @@ using RadiK:
     # Test: With input indices (WITHIDXIN)
     # ==============================================================================
 
-    @testset "filter! - WITHIDXIN=true" begin
+    @testset "filter_kernel! - WITHIDXIN=true" begin
         data = Float32[100, 85, 92, 78, 95, 88, 90, 82]
         indices = Int32[10, 11, 12, 13, 14, 15, 16, 17]
         K = Int32(3)
@@ -604,14 +715,24 @@ using RadiK:
         global_counts = adapt(backend, Int32[0])
         boundary_counts = adapt(backend, Int32[K])
         task_offsets = adapt(backend, Int32[0, length(data)])
-        stride = Int32(length(data))
 
+        threads_per_block = 256
+        blocks_x = 16
+        pack_size = 4
+        num_tasks = 1
+        LEFT = 0
+        RIGHT = 20
+        cache_size = select_cache_size(K)
 
-        filter_!(
+        kernel! = filter_kernel!(backend, threads_per_block)
+        kernel!(
             val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
-            task_offsets, stride, K;
-            with_scale=false, largest=true, with_idx_in=true
+            task_offsets, K,
+            Val(LEFT), Val(RIGHT), Val(threads_per_block), Val(pack_size), Val(cache_size),
+            Val(false), Val(true), Val(true);
+            ndrange=(threads_per_block * blocks_x, num_tasks)
         )
+        KA.synchronize(backend)
 
         count = Array(global_counts)[1]
         filtered_vals = Array(val_out)[1:count]
@@ -625,18 +746,22 @@ using RadiK:
         @test Set(filtered_idxs) == Set(expected_indices)
 
         # ----------------
-        # filter_general!
+        # filter_general_kernel!
         # ----------------
         val_out .= 0
         idx_out .= 0
         global_counts .= 0
         boundary_counts = adapt(backend, Int32[K])
 
-        filter_general!(
+        kernel! = filter_general_kernel!(backend, threads_per_block)
+        kernel!(
             val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
-            task_offsets, stride, K;
-            with_scale=false, largest=true, with_idx_in=true
+            task_offsets, K,
+            Val(LEFT), Val(RIGHT), Val(threads_per_block), Val(pack_size),
+            Val(false), Val(true), Val(true);
+            ndrange=(threads_per_block * blocks_x, num_tasks)
         )
+        KA.synchronize(backend)
 
         count = Array(global_counts)[1]
         filtered_vals = Array(val_out)[1:count]
@@ -655,7 +780,7 @@ using RadiK:
     # Test: Edge cases
     # ==============================================================================
 
-    @testset "filter! - Edge cases" begin
+    @testset "filter_kernel! - Edge cases" begin
         # Empty result
         @testset "Empty result" begin
             data = Float32[1, 2, 3]
@@ -669,23 +794,37 @@ using RadiK:
             global_counts = adapt(backend, Int32[0])
             boundary_counts = adapt(backend, Int32[0])
             task_offsets = adapt(backend, Int32[0, length(data)])
-            stride = Int32(length(data))
+    
+            threads_per_block = 256
+            blocks_x = 16
+            pack_size = 4
+            num_tasks = 1
+            LEFT = 0
+            RIGHT = 20
+            cache_size = select_cache_size(K)
 
-            
-        filter_!(
-            val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
-            task_offsets, stride, K;
-            with_scale=false, largest=true
-        )
+            kernel! = filter_kernel!(backend, threads_per_block)
+            kernel!(
+                val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
+                task_offsets, K,
+                Val(LEFT), Val(RIGHT), Val(threads_per_block), Val(pack_size), Val(cache_size),
+                Val(false), Val(true), Val(false);
+                ndrange=(threads_per_block * blocks_x, num_tasks)
+            )
+            KA.synchronize(backend)
 
             count = Array(global_counts)[1]
             @test count == 0
 
-            filter_general!(
+            kernel! = filter_general_kernel!(backend, threads_per_block)
+            kernel!(
                 val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
-                task_offsets, stride, K;
-                with_scale=false, largest=true
+                task_offsets, K,
+                Val(LEFT), Val(RIGHT), Val(threads_per_block), Val(pack_size),
+                Val(false), Val(true), Val(false);
+                ndrange=(threads_per_block * blocks_x, num_tasks)
             )
+            KA.synchronize(backend)
 
             count = Array(global_counts)[1]
             @test count == 0
@@ -704,14 +843,24 @@ using RadiK:
             global_counts = adapt(backend, Int32[0])
             boundary_counts = adapt(backend, Int32[3])  # Take 3 boundary elements
             task_offsets = adapt(backend, Int32[0, length(data)])
-            stride = Int32(length(data))
+    
+            threads_per_block = 256
+            blocks_x = 16
+            pack_size = 4
+            num_tasks = 1
+            LEFT = 0
+            RIGHT = 20
+            cache_size = select_cache_size(K)
 
-            
-        filter_!(
-            val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
-            task_offsets, stride, K;
-            with_scale=false, largest=true
-        )
+            kernel! = filter_kernel!(backend, threads_per_block)
+            kernel!(
+                val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
+                task_offsets, K,
+                Val(LEFT), Val(RIGHT), Val(threads_per_block), Val(pack_size), Val(cache_size),
+                Val(false), Val(true), Val(false);
+                ndrange=(threads_per_block * blocks_x, num_tasks)
+            )
+            KA.synchronize(backend)
 
             count = Array(global_counts)[1]
             filtered_vals = Array(val_out)[1:count]
@@ -719,17 +868,21 @@ using RadiK:
             @test count == 3
             @test all(v == 50 for v in filtered_vals)
 
-            # filter_general!
+            # filter_general_kernel!
             val_out .= 0
             idx_out .= 0
             global_counts .= 0
             boundary_counts = adapt(backend, Int32[3])
 
-            filter_general!(
+            kernel! = filter_general_kernel!(backend, threads_per_block)
+            kernel!(
                 val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
-                task_offsets, stride, K;
-                with_scale=false, largest=true
+                task_offsets, K,
+                Val(LEFT), Val(RIGHT), Val(threads_per_block), Val(pack_size),
+                Val(false), Val(true), Val(false);
+                ndrange=(threads_per_block * blocks_x, num_tasks)
             )
+            KA.synchronize(backend)
 
             count = Array(global_counts)[1]
             filtered_vals = Array(val_out)[1:count]

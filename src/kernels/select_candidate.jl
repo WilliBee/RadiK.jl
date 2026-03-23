@@ -1,9 +1,3 @@
-# ==============================================================================
-# select_candidate: Filter Elements by Bin ID
-# ==============================================================================
-# Based on radik/radik/RadixSelect/radixselect_l.cuh:128-168 (selectCandidate)
-#                   and radik/radik/RadixSelect/radixselect_l.cuh:269-408 (selectCandidateEx)
-
 using KernelAbstractions: @kernel, @index, @localmem, @synchronize, @inbounds
 import KernelAbstractions as KA
 using KernelAbstractions.Extras: @unroll
@@ -11,9 +5,9 @@ using KernelIntrinsics: vload
 using Atomix
 
 """
-    select_candidate_kernel!(data_in, data_out, global_counts, bin_ids, task_lens, stride, ...)
+    select_candidate_kernel!(data_out, global_counts, data_in, bin_ids, task_lens, stride, ...)
 
-GPU kernel that filters elements belonging to selected histogram bins.
+Filter elements belonging to selected histogram bins.
 
 After `select_bin!` identifies which bin contains the k-th element, this kernel extracts
 all elements from that bin to progressively narrow the search space.
@@ -26,9 +20,9 @@ all elements from that bin to progressively narrow the search space.
 5. **Write back**: Collaboratively write cached elements to reserved space
 
 # Arguments
-- `data_in`: Input data array [task_id * stride + idx]
 - `data_out`: Output data array for filtered elements
 - `global_counts`: Global count array [num_tasks] tracking elements per task
+- `data_in`: Input data array [task_id * stride + idx]
 - `bin_ids`: Selected bin ID for each task [num_tasks]
 - `task_lens`: Number of elements per task [num_tasks]
 - `stride`: Stride/padding between task data in arrays
@@ -71,22 +65,22 @@ global_count = [3]  # Found 3 elements in bin 5
 ```
 """
 @kernel function select_candidate_kernel!(
-    data_out::AbstractArray{T},
-    global_counts::AbstractArray{Int32},
-    data_in::AbstractArray{T},
-    bin_ids::AbstractArray{Int32},
-    task_lens::AbstractArray{Int32},
-    stride::Int32,
+    data_out::AbstractArray{ValT},
+    global_counts::AbstractArray{I},
+    data_in::AbstractArray{ValT},
+    bin_ids,
+    task_lens,
+    stride,
     ::Val{LEFT},
     ::Val{RIGHT},
     ::Val{BLOCK}
-) where {T, LEFT, RIGHT, BLOCK}
+) where {ValT, I, LEFT, RIGHT, BLOCK}
 
     # ========================================================================
     # Shared memory: counter and element cache
     # ========================================================================
-    block_count = @localmem Int32 (1,)      # Atomic counter for cache
-    block_cache = @localmem T (BLOCK,)      # Cache for filtered elements
+    block_count = @localmem I (1,)      # Atomic counter for cache
+    block_cache = @localmem ValT (BLOCK,)      # Cache for filtered elements
 
     # ========================================================================
     # Thread and task identification
@@ -198,7 +192,7 @@ end
 end
 
 """
-    select_candidate_ex_kernel!(data_in, data_out, global_counts, bin_ids, task_offsets, ...)
+    select_candidate_ex_kernel!(data_out, global_counts, data_in, bin_ids, task_offsets, ...)
 
 Enhanced GPU kernel with vectorization and scaling support for filtering by bin ID.
 
@@ -220,12 +214,11 @@ to prevent shared memory overflow.
 4. Padding handling: handle misaligned starting addresses
 
 # Arguments
-- `data_in`: Input data array (packed vectorized reads)
 - `data_out`: Output data array for filtered elements
 - `global_counts`: Global count array [task_num] tracking elements per task
+- `data_in`: Input data array (packed vectorized reads)
 - `bin_ids`: Selected bin ID for each task [task_num]
 - `task_offsets`: Prefix sum array defining task boundaries [task_num + 1]
-- `stride`: Stride/padding between task data in arrays
 - `Val{LEFT}`, `Val{RIGHT}`: Bit shift parameters for bin calculation
 - `Val{BLOCK}`: Threads per block
 - `Val{PACKSIZE}`: Elements per vectorized load
@@ -238,18 +231,18 @@ to prevent shared memory overflow.
   clustered/continuous values, many concurrent tasks, or memory bandwidth bottlenecks
 """
 @kernel function select_candidate_ex_kernel!(
-    data_out::AbstractArray{T},
-    global_counts::AbstractArray{Int32},
-    data_in::AbstractArray{T},
-    bin_ids::AbstractArray{Int32},
-    task_offsets::AbstractArray{Int32},
+    data_out::AbstractArray{ValT},
+    global_counts::AbstractArray{I},
+    data_in::AbstractArray{ValT},
+    bin_ids,
+    task_offsets,
     ::Val{LEFT},
     ::Val{RIGHT},
     ::Val{BLOCK},
     ::Val{PACKSIZE},
     ::Val{WITHSCALE},
     ::Val{LARGEST}
-) where {T, LEFT, RIGHT, BLOCK, PACKSIZE, WITHSCALE, LARGEST}
+) where {ValT, I, LEFT, RIGHT, BLOCK, PACKSIZE, WITHSCALE, LARGEST}
 
     block_x = @index(Group, Cartesian)[1]   # Block ID in x-dimension (1-indexed)
     block_y = @index(Group, Cartesian)[2]   # Task group ID (1-indexed)
@@ -261,8 +254,8 @@ to prevent shared memory overflow.
     # ========================================================================
     # Shared memory: counter and element cache (doubled for safety)
     # ========================================================================
-    block_count = @localmem Int32 (1,)                    # Atomic counter for cache
-    block_cache = @localmem T (2 * BLOCK * PACKSIZE,)     # Cache for filtered elements
+    block_count = @localmem I (1,)                          # Atomic counter for cache
+    block_cache = @localmem ValT (2 * BLOCK * PACKSIZE,)    # Cache for filtered elements
 
     # ========================================================================
     # Thread and task identification
@@ -379,167 +372,4 @@ to prevent shared memory overflow.
             # each pass
         end
     end
-end
-
-
-# ==============================================================================
-# Convenience wrappers
-# ==============================================================================
-
-"""
-    select_candidate!(data_in, data_out, global_counts, bin_ids, task_lens, stride;
-                     LEFT=0, RIGHT=20, threads_per_block=256)
-
-Filter elements belonging to selected histogram bins for each task.
-
-After `select_bin!` identifies which bin contains the k-th element, this function
-filters all input elements to extract only those in the selected bin, narrowing the
-search space for the next radix select iteration.
-
-# Arguments
-- `data_in`: Input data array (layout: [task_id * stride + idx])
-- `data_out`: Output data array for filtered elements
-- `global_counts`: Count array [num_tasks], updated with filtered element counts
-- `bin_ids`: Selected bin ID for each task [num_tasks] (0-indexed)
-- `task_lens`: Number of elements per task [num_tasks]
-- `stride`: Stride between task data in arrays
-- `LEFT`: Left bit shift for bin calculation (default 0)
-- `RIGHT`: Right bit shift for bin calculation (default 20)
-- `threads_per_block`: GPU block size (default 256)
-
-# Constraints
-- Number of tasks ≤ available GPU blocks in y-dimension
-- Global counts should be initialized to 0 before first call
-- Output array must be large enough to hold filtered elements
-
-# Example
-```julia
-using CUDA, RadiK
-
-# Setup: find elements in bin 5
-data_in = CuArray{Float32}([1.0f0, 2.0f0, 3.0f0, 4.0f0, 5.0f0])
-data_out = CUDA.zeros(Float32, 5)
-global_counts = CUDA.zeros(Int32, 1)
-bin_ids = CuArray{Int32}([5])
-task_lens = CuArray{Int32}([5])
-stride = Int32(5)
-
-select_candidate!(data_in, data_out, global_counts, bin_ids, task_lens, stride)
-println("Filtered count: ", Array(global_counts)[1])
-```
-
-# See also
-- [`count_bin!`](@ref): Build histogram from data
-- [`select_bin!`](@ref): Find bin containing k-th element
-"""
-function select_candidate!(
-    data_out::AbstractArray{T},
-    global_counts::AbstractArray{Int32},
-    data_in::AbstractArray{T},
-    bin_ids::AbstractArray{Int32},
-    task_lens::AbstractArray{Int32},
-    stride::Int32;
-    LEFT::Int = 0,
-    RIGHT::Int = 20,
-    threads_per_block = 256
-) where T
-    backend = KA.get_backend(data_in)
-    num_tasks = length(task_lens)
-    max_task_len = maximum(Array(task_lens))
-    num_blocks = cld(max_task_len, threads_per_block)
-
-    data_out .= 0
-    global_counts .= 0
-
-    select_candidate_kernel!(backend, threads_per_block)(
-        data_out, global_counts, data_in, bin_ids, task_lens, stride,
-        Val(LEFT), Val(RIGHT), Val(threads_per_block);
-        ndrange=(num_blocks * threads_per_block, num_tasks)
-    )
-    KA.synchronize(backend)
-
-    return data_out, global_counts
-end
-
-
-"""
-    select_candidate_ex!(data_in, data_out, global_counts, bin_ids, task_offsets, stride;
-                        LEFT=0, RIGHT=20, threads_per_block=256, blocks_x=16,
-                        pack_size=4, with_scale=true, largest=true)
-
-Enhanced version with vectorization and scaling support for filtering by bin ID.
-
-# Arguments
-- `data_in`: Input data array (any Float type)
-- `data_out`: Output data array for filtered elements
-- `global_counts`: Count array [num_tasks], updated with filtered element counts
-- `bin_ids`: Selected bin ID for each task [num_tasks] (0-indexed)
-- `task_offsets`: Prefix sum array defining task boundaries [num_tasks + 1]
-- `stride`: Stride between task data in arrays
-- `LEFT`: Left bit shift for bin calculation (default 0)
-- `RIGHT`: Right bit shift for bin calculation (default 20)
-- `threads_per_block`: GPU block size (default 256)
-- `blocks_x`: Number of blocks in x-dimension (default 16)
-- `pack_size`: Elements per vectorized load (default 4)
-- `with_scale`: Enable adaptive scaling (default true)
-- `largest`: Finding largest or smallest elements (default true)
-
-# Constraints
-- Number of tasks ≤ available GPU blocks in y-dimension
-- Global counts should be initialized to 0 before first call
-- `pack_size` must be compatible with data type
-
-# Example
-```julia
-using CUDA, RadiK
-
-# Task offsets: 3 tasks with varying sizes
-task_offsets = CuArray{Int32}([0, 100, 250, 400])
-data_in = rand(Float32, 400)
-data_out = CUDA.zeros(Float32, 400)
-global_counts = CUDA.zeros(Int32, 3)
-bin_ids = CuArray{Int32}([42, 17, 99])
-
-select_candidate_ex!(data_in, data_out, global_counts, bin_ids, task_offsets, Int32(400))
-
-println("Task 1 filtered: ", Array(global_counts)[1])
-println("Task 2 filtered: ", Array(global_counts)[2])
-println("Task 3 filtered: ", Array(global_counts)[3])
-```
-
-# See also
-- [`select_candidate!`](@ref): Basic version without vectorization
-- [`count_bin_ex!`](@ref): Build histogram with vectorization
-"""
-function select_candidate_ex!(
-    data_out::AbstractArray{T},
-    global_counts::AbstractArray{Int32},
-    data_in::AbstractArray{T},
-    bin_ids::AbstractArray{Int32},
-    task_offsets::AbstractArray{Int32};
-    LEFT::Int = 0,
-    RIGHT::Int = 20,
-    threads_per_block = 256,
-    blocks_x = 16,
-    pack_size = 4,
-    with_scale::Bool = true,
-    largest::Bool = true
-) where {T}
-    backend = get_backend(data_in)
-
-    num_tasks = length(task_offsets) - 1
-
-    data_out .= 0
-    global_counts .= 0
-
-    kernel! = select_candidate_ex_kernel!(backend, threads_per_block)
-
-    kernel!(
-        data_out, global_counts, data_in, bin_ids, task_offsets,
-        Val(LEFT), Val(RIGHT), Val(threads_per_block), Val(pack_size),
-        Val(with_scale), Val(largest);
-        ndrange=(threads_per_block * blocks_x, num_tasks)
-    )
-
-    KA.synchronize(backend)
 end

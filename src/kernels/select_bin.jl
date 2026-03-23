@@ -1,8 +1,3 @@
-# ==============================================================================
-# select_bin: Find Bin Containing K-th Element
-# ==============================================================================
-# Based on radik/radik/RadixSelect/radixselect_l.cuh:45-126
-
 using KernelAbstractions: @kernel, @index, @localmem, @private, @synchronize, @inbounds
 using KernelAbstractions.Extras: @unroll
 using KernelIntrinsics: @shfl
@@ -114,27 +109,32 @@ Find the histogram bin containing the k-th element and write results.
 2. If yes, search within this thread's bins to find exact bin
 3. Write bin ID (0-indexed), updated k value, and bin count to output arrays
 
-# Search Direction
-- `LARGEST=true`: search backward from highest bin to lowest
-- `LARGEST=false`: search forward from lowest bin to highest
-
 # Arguments
-- `counts`: Private memory array of bin counts assigned to this thread
+- `counts`: Thread's local bin counts
 - `old_k`: k value to find
-- `neighbor`: Previous thread's cumulative count (exclusive lower bound)
-- `sum`: This thread's cumulative count (inclusive upper bound)
-- `thread_x`: 1-indexed thread ID in block
-- `UNROLL`: Number of bins per thread
+- `neighbor`: Previous thread's cumulative count (exclusive)
+- `sum`: This thread's cumulative count (inclusive)
+- `thread_x`: Thread ID in block (1-indexed)
+- `UNROLL`: Bins per thread
 - `task_id`: Task ID (1-indexed)
-- `bin_ids`: Output array for selected bin IDs (0-indexed)
-- `k_values`: Output array for updated k values (1-indexed within bin)
-- `task_lens`: Output array for counts in selected bin
-- `Val{LARGEST}`: Search direction
+- `bin_ids`: Output array for selected bin IDs
+- `k_values`: Output array for k values
+- `task_lens`: Output array for counts
+- `Val{LARGEST}`: Search direction (true=backward, false=forward)
 """
 @inline function find_bin_and_write!(
-    counts, old_k, neighbor, sum, thread_x, UNROLL,
-    task_id, bin_ids, k_values, task_lens, ::Val{LARGEST}
-) where LARGEST
+    counts, 
+    old_k, 
+    neighbor, 
+    sum, 
+    thread_x,
+    task_id, 
+    bin_ids, 
+    k_values, 
+    task_lens, 
+    ::Val{UNROLL},
+    ::Val{LARGEST}
+) where {LARGEST, UNROLL}
     # Check if k-th element is in this thread's range
     if neighbor < old_k <= sum
         old_k -= neighbor  # Adjust k to be relative to this thread's first element
@@ -266,8 +266,8 @@ Step 4: Select bin
 
 """
 @kernel function select_bin_kernel!(
-    bin_ids::AbstractArray{T},
-    k_values::AbstractArray{T},
+    bin_ids,
+    k_values,
     task_lens::AbstractArray{T},
     histogram::AbstractArray{T, 2},
     ::Val{LARGEST},
@@ -340,107 +340,9 @@ Step 4: Select bin
     neighbor = compute_neighbor(prefix_sum, thread_x, Val(LARGEST), Val(BLOCK), T)
 
     find_bin_and_write!(
-        counts, old_k, neighbor, sum, thread_x, UNROLL,
-        task_id, bin_ids, k_values, task_lens, Val(LARGEST)
+        counts, old_k, neighbor, sum, thread_x,
+        task_id, bin_ids, k_values, task_lens, 
+        Val(UNROLL), Val(LARGEST)
     )
 
-end
-
-
-# ==============================================================================
-# Convenience wrapper
-# ==============================================================================
-
-"""
-    select_bin!(histogram, bin_ids, k_values, task_lens;
-               hist_len=256, largest=true, threads_per_block=1024, warp_size=32)
-
-Find the histogram bin containing the k-th element for each task.
-
-For each task, determines which histogram bin contains the k-th smallest or largest element,
-and updates the k value to be the position within that bin. Used iteratively in radix select
-to progressively narrow down the search space.
-
-# Arguments
-- `histogram`: 2D histogram array [hist_len, num_tasks] with bin counts
-- `bin_ids`: Output array [num_tasks] for selected bin IDs (0-indexed)
-- `k_values`: Input/output array [num_tasks] for k values (updated to 1-indexed position within bin)
-- `task_lens`: Output array [num_tasks] for counts in selected bin
-- `hist_len`: Number of histogram bins (must be power of 2, default 256)
-- `largest`: Find k-th largest (true) or k-th smallest (false) elements (default true)
-- `threads_per_block`: GPU block size (must be multiple of 32, default 1024)
-- `warp_size`: Warp size for GPU (default 32)
-
-# Constraints
-- `hist_len` must be divisible by `threads_per_block`
-- `threads_per_block` must be divisible by `warp_size`
-- Number of tasks ≤ available GPU blocks
-
-# Algorithm
-1. One task per GPU block
-2. Each thread loads `hist_len / threads_per_block` bins
-3. Warp-level prefix sum using shuffle operations
-4. Tree reduction across warps
-5. Binary search to find bin containing k-th element
-
-# Outputs
-- `bin_ids`: Histogram bin index containing k-th element (0-indexed)
-- `k_values`: Position of k-th element within that bin (1-indexed)
-- `task_lens`: Number of elements in that bin
-
-# Example
-```julia
-using CUDA, RadiK
-
-# Simple histogram: 10 bins with 1 element each
-histogram = CUDA.zeros(Int32, 256, 1)
-histogram[1:10, 1] .= 1
-bin_ids = CUDA.zeros(Int32, 1)
-k_values = CuArray{Int32}([5])   # Find 5th element
-task_lens = CUDA.zeros(Int32, 1)
-
-select_bin!(histogram, bin_ids, k_values, task_lens)
-
-println("Target bin: ", Array(bin_ids)[1])    # Output: 4 (0-indexed, 5th element is in bin 4)
-println("New k: ", Array(k_values)[1])        # Output: 1 (1st element within that bin)
-println("Bin count: ", Array(task_lens)[1])   # Output: 1 (bin has 1 element)
-```
-
-# See also
-- [`count_bin!`](@ref): Build histogram from data
-- [`select_bin_kernel!`](@ref): GPU kernel implementation
-"""
-function select_bin!(
-    bin_ids::AbstractArray{T},
-    k_values::AbstractArray{T},
-    task_lens::AbstractArray{T},
-    histogram::AbstractArray{T, 2};
-    largest::Bool = true,
-    threads_per_block = 32,
-    warp_size = 32
-) where T
-    backend = get_backend(histogram)
-
-    # Get dimensions
-    hist_len, num_tasks = size(histogram)
-
-    # Validate inputs
-    @assert hist_len % threads_per_block == 0 "hist_len must be divisible by threads_per_block"
-    @assert threads_per_block % warp_size == 0 "threads_per_block must be divisible by warp_size"
-
-    # Compute bins per thread (must be compile-time constant for @private)
-    unroll = hist_len ÷ threads_per_block
-
-    # Compile and launch kernel
-    kernel! = select_bin_kernel!(backend, threads_per_block)
-
-    kernel!(
-        bin_ids, k_values, task_lens, histogram,
-        Val(largest), Val(threads_per_block), Val(hist_len), Val(unroll), Val(warp_size);
-        ndrange=num_tasks * threads_per_block
-    )
-
-    KA.synchronize(backend)
-
-    return bin_ids, k_values, task_lens
 end

@@ -47,7 +47,7 @@ Random.seed!(42)
         result = KA.zeros(backend, Float32, k, Int(num_tasks))
         indices_out = KA.zeros(backend, Int32, k, Int(num_tasks))
 
-        ws = RadiKWorkspace(backend, 5000, num_tasks, Int32, Float32)
+        ws = RadiKWorkspace(backend, 5000, num_tasks, Int32)
 
         LARGEST = true
         REV = false
@@ -92,6 +92,60 @@ Random.seed!(42)
 
                 offset += task_len
             end
+        end
+    end
+
+    @testset "Test topk convenience overloads" begin
+        data = rand!(allocate(backend, Float32, 1000))
+        k = 100
+
+        values1, indices1 = topk(data, k; largest=true, rev=false)
+
+        indices = adapt(backend, collect(Int32(1):Int32(1000)))
+        values2, indices2 = topk(data, k; indices=indices, largest=true, rev=false)
+
+        @test Array(values1) == Array(values2)
+        @test Array(indices1) == Array(indices2)
+
+        expected = sort(partialsort(Array(data), 1:k, rev=true), rev=false)
+        @test Array(values1) == expected
+    end
+
+    @testset "Test topk batch processing" begin
+        num_tasks = 3
+        task_lens = [1000, 1500, 800]
+        k = 50
+
+        # Create concatenated data
+        total_len = sum(task_lens)
+        data = rand!(allocate(backend, Float32, total_len))
+
+        # Test batch without custom indices
+        values1, indices1 = topk(data, task_lens, k; largest=true, rev=false)
+
+        # Test batch with custom indices (per-task sequential indices)
+        indices_parts = map(task_lens) do len
+            collect(Int32(1):Int32(len))
+        end
+        indices = adapt(backend, vcat(indices_parts...))
+        values2, indices2 = topk(data, task_lens, k; indices=indices, largest=true, rev=false)
+
+        # Both should produce same values
+        @test Array(values1) == Array(values2)
+
+        # Both should produce same indices (when using sequential indices)
+        @test Array(indices1) == Array(indices2)
+
+        # Verify each task's results are correct
+        offset = 0
+        for task_id in 1:num_tasks
+            task_data = Array(data[offset+1:offset+task_lens[task_id]])
+            task_values = Array(values1[:, task_id])
+
+            expected = sort(partialsort(task_data, 1:k, rev=true), rev=false)
+            @test task_values == expected
+
+            offset += task_lens[task_id]
         end
     end
 end

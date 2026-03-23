@@ -19,6 +19,7 @@ include("algorithm.jl")
 # Export main API
 export topk_radix_select!
 export topk
+export topk!
 export RadiKWorkspace
 
 end # module RadiK

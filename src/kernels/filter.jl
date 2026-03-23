@@ -7,6 +7,21 @@ using Atomix
 # ==============================================================================
 # Module-level helper functions
 # ==============================================================================
+
+@inline function select_cache_size(k)
+    if k <= 128
+        return 128
+    elseif k <= 256
+        return 256
+    elseif k <= 512
+        return 512
+    elseif k <= 1024
+        return 1024
+    else
+        error("k > 1024 not supported by filter_kernel!. Use filter_general_kernel! instead.")
+    end
+end
+
 struct KernelFilterContext{LARGEST, BLOCK, PACKSIZE, WITHIDXIN, ValT, IdxT} end
 
 struct ThreadFilterContext{GC, BouC, BCo, VBCa, IBCa, VO, IDXIn, IDXOut, T, U, V}
@@ -125,32 +140,31 @@ end
 
 """
     filter_kernel!(data_in, idx_in, kth_element, val_out, idx_out, global_counts,
-                   boundary_counts, task_offsets, stride, K, ...)
+                   boundary_counts, task_offsets, k, ...)
 
-GPU kernel for final top-K selection using k-th element threshold.
+Final top-k selection using k-th element threshold.
 
 Compares SCALED values against threshold but outputs ORIGINAL (unscaled) values.
-Optimizes for small datasets (N ≤ K) by copying all elements.
+Optimizes for small datasets (N ≤ k) by copying all elements.
 
 **⚠️ CRITICAL**: `kth_element` must be computed by previous radix passes such that
-≈K elements pass the filter. Output arrays sized for exactly K elements - buffer
-overflow will occur if more than K elements qualify.
+≈K elements pass the filter. Output arrays sized for exactly k elements - buffer
+overflow will occur if more than k elements qualify.
 
 # Arguments
 - `data_in`: Input data array (original values)
 - `idx_in`: Input indices array
-- `kth_element`: K-th element values (scaled, from previous iterations)
-- `val_out`: Output values array [K × num_tasks]
-- `idx_out`: Output indices array [K × num_tasks]
+- `kth_element`: k-th element values (scaled, from previous iterations)
+- `val_out`: Output values array [k × num_tasks]
+- `idx_out`: Output indices array [k × num_tasks]
 - `global_counts`: Global count array tracking elements per task
 - `boundary_counts`: Boundary count for elements equal to k-th element
 - `task_offsets`: Task offset array defining task boundaries
-- `stride`: Stride between task data in arrays
-- `K`: Number of top elements to select per task
+- `k`: Number of top elements to select per task
 - `Val{LEFT}`, `Val{RIGHT}`: Bit shift parameters
 - `Val{BLOCK}`: Threads per block
 - `Val{PACKSIZE}`: Elements per vectorized load
-- `Val{CACHESIZE}`: Cache size for filtered elements (K ≤ 1024)
+- `Val{CACHESIZE}`: Cache size for filtered elements (k ≤ 1024)
 - `Val{WITHSCALE}`: Apply adaptive scaling
 - `Val{LARGEST}`: Select largest (true) or smallest (false)
 - `Val{WITHIDXIN}`: Whether input indices are provided
@@ -158,14 +172,13 @@ overflow will occur if more than K elements qualify.
 @kernel function filter_kernel!(
     val_out::AbstractArray{ValT},
     idx_out::AbstractArray{IdxT},
-    global_counts::AbstractArray{Int32},
-    boundary_counts::AbstractArray{Int32},
+    global_counts::AbstractArray{I},
+    boundary_counts::AbstractArray{I},
     data_in::AbstractArray{ValT},
     idx_in::AbstractArray{IdxT},
     kth_vals::AbstractArray{ValT},
-    task_offsets::AbstractArray{Int32},
-    stride::Int32,
-    K::Int32,
+    task_offsets,
+    k,
     ::Val{LEFT},
     ::Val{RIGHT},
     ::Val{BLOCK},
@@ -174,7 +187,7 @@ overflow will occur if more than K elements qualify.
     ::Val{WITHSCALE},
     ::Val{LARGEST},
     ::Val{WITHIDXIN}
-) where {ValT, IdxT, LEFT, RIGHT, BLOCK, PACKSIZE, CACHESIZE, WITHSCALE, LARGEST, WITHIDXIN}
+) where {ValT, IdxT, I, LEFT, RIGHT, BLOCK, PACKSIZE, CACHESIZE, WITHSCALE, LARGEST, WITHIDXIN}
 
     block_x = @index(Group, Cartesian)[1]   # Block ID in x-dimension (1-indexed)
     block_y = @index(Group, Cartesian)[2]   # Task group ID (1-indexed)
@@ -186,7 +199,7 @@ overflow will occur if more than K elements qualify.
     # ========================================================================
     # Shared memory: counter and element cache
     # ========================================================================
-    block_count = @localmem Int32 (1,)                    # Atomic counter for cache
+    block_count = @localmem I (1,)                    # Atomic counter for cache
     val_block_cache = @localmem ValT (CACHESIZE,)                  # Cache for original values
     idx_block_cache = @localmem IdxT (CACHESIZE,)               # Cache for indices
 
@@ -254,9 +267,9 @@ overflow will occur if more than K elements qualify.
         )
 
         # ====================================================================
-        # Small dataset optimization: N ≤ K, just copy all
+        # Small dataset optimization: N ≤ k, just copy all
         # ====================================================================
-        if original_len <= K
+        if original_len <= k
             if nb_steps > 0
                 idx = tid + offset ÷ PACKSIZE
 
@@ -370,28 +383,27 @@ end
 """
     filter_general_kernel!(data_in, idx_in, kth_element, val_out, idx_out, ...)
 
-Enhanced GPU kernel for final top-K selection with aggressive cache flushing.
+Enhanced GPU kernel for final top-k selection with aggressive cache flushing.
 
-Same as `filter_kernel!` but optimized for K > 1024. Flushes cache after each
+Same as `filter_kernel!` but optimized for k > 1024. Flushes cache after each
 main loop iteration for safer overflow handling at the cost of higher overhead.
 
 **⚠️ CRITICAL**: Same precondition as `filter_kernel!` - `kth_element` must ensure
 ≈K elements pass the filter to prevent buffer overflow.
 
-**When to use:** K > 1024 (use `filter_kernel!` for K ≤ 1024 for better performance).
+**When to use:** k > 1024 (use `filter_kernel!` for k ≤ 1024 for better performance).
 See `filter_kernel!` for parameter documentation.
 """
 @kernel function filter_general_kernel!(
     val_out::AbstractArray{ValT},
     idx_out::AbstractArray{IdxT},
-    global_counts::AbstractArray{Int32},
-    boundary_counts::AbstractArray{Int32},
+    global_counts::AbstractArray{I},
+    boundary_counts::AbstractArray{I},
     data_in::AbstractArray{ValT},
     idx_in::AbstractArray{IdxT},
     kth_vals::AbstractArray{ValT},
-    task_offsets::AbstractArray{Int32},
-    stride::Int32,
-    K::Int32,
+    task_offsets,
+    k,
     ::Val{LEFT},
     ::Val{RIGHT},
     ::Val{BLOCK},
@@ -399,7 +411,7 @@ See `filter_kernel!` for parameter documentation.
     ::Val{WITHSCALE},
     ::Val{LARGEST},
     ::Val{WITHIDXIN}
-) where {ValT, IdxT, LEFT, RIGHT, BLOCK, PACKSIZE, WITHSCALE, LARGEST, WITHIDXIN}
+) where {ValT, IdxT, I, LEFT, RIGHT, BLOCK, PACKSIZE, WITHSCALE, LARGEST, WITHIDXIN}
 
     block_x = @index(Group, Cartesian)[1]
     block_y = @index(Group, Cartesian)[2]
@@ -411,7 +423,7 @@ See `filter_kernel!` for parameter documentation.
     # ========================================================================
     # Shared memory: counter and element cache
     # ========================================================================
-    block_count = @localmem Int32 (1,)
+    block_count = @localmem I (1,)
     val_block_cache = @localmem ValT (BLOCK * PACKSIZE,)
     idx_block_cache = @localmem IdxT (BLOCK * PACKSIZE,)
 
@@ -485,9 +497,9 @@ See `filter_kernel!` for parameter documentation.
         )
 
         # ====================================================================
-        # Small dataset (N ≤ K): copy all elements
+        # Small dataset (N ≤ k): copy all elements
         # ====================================================================
-        if original_len <= K
+        if original_len <= k
             if nb_steps > 0
                 idx = tid + offset ÷ PACKSIZE
 
@@ -608,131 +620,3 @@ See `filter_kernel!` for parameter documentation.
     end
 end
 
-# ==============================================================================
-# Convenience wrappers
-# ==============================================================================
-
-"""
-    filter!(data_in, idx_in, kth_element, val_out, idx_out, global_counts,
-            boundary_counts, task_offsets, stride, K; ...)
-
-Convenience wrapper for `filter_kernel!`. Filters elements by k-th element threshold.
-
-# Arguments
-- `data_in`: Input data array (original values)
-- `idx_in`: Input indices array
-- `kth_element`: K-th element values (scaled, one per task)
-- `val_out`: Output values array [K × num_tasks]
-- `idx_out`: Output indices array [K × num_tasks]
-- `global_counts`: Global count array [num_tasks] (initialize to 0)
-- `boundary_counts`: Boundary count array [num_tasks] (elements equal to k-th)
-- `task_offsets`: Task offset array [num_tasks + 1]
-- `stride`: Stride between task data in arrays
-- `K`: Number of top elements to select per task
-
-# Keyword Arguments
-- `LEFT=0`, `RIGHT=20`: Bit shift parameters
-- `threads_per_block=256`: GPU block size
-- `blocks_x=16`: Number of blocks in x-dimension
-- `pack_size=4`: Elements per vectorized load
-- `with_scale=true`: Apply adaptive scaling
-- `largest=true`: Select largest (true) or smallest (false)
-- `with_idx_in=false`: Whether input indices are provided
-
-# Constraints
-K ≤ 1024 (use `filter_general!` for larger K).
-"""
-function filter_!(
-    val_out::AbstractArray{ValT},
-    idx_out::AbstractArray{IdxT},
-    global_counts::AbstractArray{Int32},
-    boundary_counts::AbstractArray{Int32},
-    data_in::AbstractArray{ValT},
-    idx_in::AbstractArray{IdxT},
-    kth_element::AbstractArray{ValT},
-    task_offsets::AbstractArray{Int32},
-    stride::Int32,
-    K::Int32;
-    LEFT::Int=0,
-    RIGHT::Int=20,
-    threads_per_block=256,
-    blocks_x=16,
-    pack_size::Int=4,
-    with_scale::Bool=true,
-    largest::Bool=true,
-    with_idx_in::Bool=false
-) where {ValT, IdxT}
-    backend = get_backend(data_in)
-    num_tasks = length(task_offsets) - 1
-
-    # Select cache size based on K
-    cachesize = if K <= 128
-        128
-    elseif K <= 256
-        256
-    elseif K <= 512
-        512
-    elseif K <= 1024
-        1024
-    else
-        error("K > 1024 not supported by filter!. Use filter_general! instead.")
-    end
-
-    kernel! = filter_kernel!(backend, threads_per_block)
-
-    kernel!(
-        val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
-        task_offsets, stride, K,
-        Val(LEFT), Val(RIGHT), Val(threads_per_block), Val(pack_size), Val(cachesize),
-        Val(with_scale), Val(largest), Val(with_idx_in);
-        ndrange=(threads_per_block * blocks_x, num_tasks)
-    )
-
-    KA.synchronize(backend)
-end
-
-
-"""
-    filter_general!(data_in, idx_in, kth_element, val_out, idx_out, global_counts,
-                    boundary_counts, task_offsets, stride, K; ...)
-
-Convenience wrapper for `filter_general_kernel!`. For K > 1024 with aggressive
-cache flushing to prevent overflow.
-
-Same parameters as `filter!`. Use when K > 1024.
-"""
-function filter_general!(
-    val_out::AbstractArray{ValT},
-    idx_out::AbstractArray{IdxT},
-    global_counts::AbstractArray{Int32},
-    boundary_counts::AbstractArray{Int32},
-    data_in::AbstractArray{ValT},
-    idx_in::AbstractArray{IdxT},
-    kth_element::AbstractArray{ValT},
-    task_offsets::AbstractArray{Int32},
-    stride::Int32,
-    K::Int32;
-    LEFT::Int=0,
-    RIGHT::Int=20,
-    threads_per_block=256,
-    blocks_x=16,
-    pack_size::Int=4,
-    with_scale::Bool=true,
-    largest::Bool=true,
-    with_idx_in::Bool=false
-) where {ValT, IdxT}
-    backend = get_backend(data_in)
-    num_tasks = length(task_offsets) - 1
-
-    kernel! = filter_general_kernel!(backend, threads_per_block)
-
-    kernel!(
-        val_out, idx_out, global_counts, boundary_counts, data_in, idx_in, kth_element,
-        task_offsets, stride, K,
-        Val(LEFT), Val(RIGHT), Val(threads_per_block), Val(pack_size),
-        Val(with_scale), Val(largest), Val(with_idx_in);
-        ndrange=(threads_per_block * blocks_x, num_tasks)
-    )
-
-    KA.synchronize(backend)
-end

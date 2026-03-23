@@ -2,7 +2,7 @@ using RadiK:
     cross_warp_reduction!,
     compute_neighbor,
     find_bin_and_write!,
-    select_bin!
+    select_bin_kernel!
 
 @testset "Test select_bin.jl" begin
 
@@ -95,8 +95,9 @@ using RadiK:
         k_values = zeros(Int, 1)
         task_lens = zeros(Int, 1)
 
-        find_bin_and_write!(counts, old_k, neighbor, sum, thread_x, UNROLL,
-                        task_id, bin_ids, k_values, task_lens, Val(true))
+        find_bin_and_write!(counts, old_k, neighbor, sum, thread_x,
+                        task_id, bin_ids, k_values, task_lens, 
+                        Val(UNROLL), Val(true))
 
         @test bin_ids[1] == (thread_x - 1) * UNROLL + 4
         @test k_values[1] == 5
@@ -109,8 +110,9 @@ using RadiK:
         k_values = zeros(Int, 1)
         task_lens = zeros(Int, 1)
 
-        find_bin_and_write!(counts, old_k, neighbor, sum, thread_x, UNROLL,
-                        task_id, bin_ids, k_values, task_lens, Val(false))
+        find_bin_and_write!(counts, old_k, neighbor, sum, thread_x,
+                        task_id, bin_ids, k_values, task_lens, 
+                        Val(UNROLL), Val(false))
 
         @test bin_ids[1] == (thread_x - 1) * UNROLL + 2
         @test k_values[1] == 2
@@ -131,8 +133,9 @@ using RadiK:
         k_values = zeros(Int, 2)
         task_lens = zeros(Int, 2)
 
-        find_bin_and_write!(counts, old_k, neighbor, sum, thread_x, UNROLL,
-                        task_id, bin_ids, k_values, task_lens, Val(true))
+        find_bin_and_write!(counts, old_k, neighbor, sum, thread_x,
+                        task_id, bin_ids, k_values, task_lens, 
+                        Val(UNROLL), Val(true))
 
         # Should not write anything (k is out of range)
         @test bin_ids[1] == 0
@@ -156,8 +159,9 @@ using RadiK:
         k_values = zeros(Int, 1)
         task_lens = zeros(Int, 1)
 
-        find_bin_and_write!(counts, old_k, neighbor, sum, 1, 3,
-                        1, bin_ids, k_values, task_lens, Val(LARGEST))
+        find_bin_and_write!(counts, old_k, neighbor, sum, 1,
+                        1, bin_ids, k_values, task_lens, 
+                        Val(3), Val(LARGEST))
 
         @test bin_ids[1] == 1
         @test k_values[1] == 1
@@ -174,8 +178,9 @@ using RadiK:
         k_values = zeros(Int, 1)
         task_lens = zeros(Int, 1)
 
-        find_bin_and_write!(counts, old_k, neighbor, sum, 1, 3,
-                        1, bin_ids, k_values, task_lens, Val(LARGEST))
+        find_bin_and_write!(counts, old_k, neighbor, sum, 1,
+                        1, bin_ids, k_values, task_lens, 
+                        Val(3), Val(LARGEST))
 
         @test bin_ids[1] == 3
         @test k_values[1] == 2
@@ -186,7 +191,7 @@ using RadiK:
     # Integration Tests
     # ==============================================================================
 
-    @testset "select_bin! - Largest elements" begin
+    @testset "select_bin_kernel! - Largest elements" begin
         # Each of 10 bins has exactly 1 element
         histogram = zeros(Int32, 256, 1)
         histogram[1:4, 1] .= [2, 8, 14, 3]
@@ -196,8 +201,16 @@ using RadiK:
         k_values_gpu = adapt(backend, Int32[5])     # Find 5th largest
         task_lens_gpu = KA.zeros(backend, Int32, 1)
 
-        select_bin!(bin_ids_gpu, k_values_gpu, task_lens_gpu, histogram_gpu;
-            largest=true, threads_per_block=256, warp_size=WARP_SIZE)
+        hist_len, num_tasks = size(histogram_gpu)
+        threads_per_block = 256
+        @assert hist_len % threads_per_block == 0
+        unroll = hist_len ÷ threads_per_block
+
+        kernel! = select_bin_kernel!(backend, threads_per_block)
+        kernel!(bin_ids_gpu, k_values_gpu, task_lens_gpu, histogram_gpu,
+            Val(true), Val(threads_per_block), Val(hist_len), Val(unroll), Val(WARP_SIZE);
+            ndrange=num_tasks * threads_per_block)
+        KA.synchronize(backend)
 
         bin_id = Array(bin_ids_gpu)[1]
         k_value = Array(k_values_gpu)[1]
@@ -208,18 +221,26 @@ using RadiK:
         @test task_len == 14
     end
 
-    @testset "select_bin! - Smallest elements" begin
+    @testset "select_bin_kernel! - Smallest elements" begin
         # Each of 10 bins has exactly 1 element
         histogram = zeros(Int32, 256, 1)
         histogram[1:4, 1] .= [2, 8, 14, 3]
         histogram_gpu = adapt(backend, histogram)
-        
+
         bin_ids_gpu = KA.zeros(backend, Int32, 1)
         k_values_gpu = adapt(backend, Int32[5])     # Find 5th smallest
         task_lens_gpu = KA.zeros(backend, Int32, 1)
 
-        select_bin!(bin_ids_gpu, k_values_gpu, task_lens_gpu, histogram_gpu;
-            largest=false, threads_per_block=256, warp_size=WARP_SIZE)
+        hist_len, num_tasks = size(histogram_gpu)
+        threads_per_block = 256
+        @assert hist_len % threads_per_block == 0
+        unroll = hist_len ÷ threads_per_block
+
+        kernel! = select_bin_kernel!(backend, threads_per_block)
+        kernel!(bin_ids_gpu, k_values_gpu, task_lens_gpu, histogram_gpu,
+            Val(false), Val(threads_per_block), Val(hist_len), Val(unroll), Val(WARP_SIZE);
+            ndrange=num_tasks * threads_per_block)
+        KA.synchronize(backend)
 
         bin_id = Array(bin_ids_gpu)[1]
         k_value = Array(k_values_gpu)[1]
@@ -230,7 +251,7 @@ using RadiK:
         @test task_len == 8
     end
 
-    @testset "select_bin! - Various block sizes" begin
+    @testset "select_bin_kernel! - Various block sizes" begin
         for threads_per_block in [32, 64, 128, 256]
             histogram = zeros(Int32, 256, 1)
             histogram[1:10, 1] .= 1
@@ -240,8 +261,15 @@ using RadiK:
             k_values_gpu = adapt(backend, Int32[5])
             task_lens_gpu = KA.zeros(backend, Int32, 1)
 
-            select_bin!(bin_ids_gpu, k_values_gpu, task_lens_gpu, histogram_gpu;
-                largest=true, threads_per_block=threads_per_block, warp_size=WARP_SIZE)
+            hist_len, num_tasks = size(histogram_gpu)
+            @assert hist_len % threads_per_block == 0
+            unroll = hist_len ÷ threads_per_block
+
+            kernel! = select_bin_kernel!(backend, threads_per_block)
+            kernel!(bin_ids_gpu, k_values_gpu, task_lens_gpu, histogram_gpu,
+                Val(true), Val(threads_per_block), Val(hist_len), Val(unroll), Val(WARP_SIZE);
+                ndrange=num_tasks * threads_per_block)
+            KA.synchronize(backend)
 
             bin_id = Array(bin_ids_gpu)[1]
             k_value = Array(k_values_gpu)[1]
@@ -253,7 +281,7 @@ using RadiK:
         end
     end
 
-    @testset "select_bin! - Multiple tasks" begin
+    @testset "select_bin_kernel! - Multiple tasks" begin
         num_tasks = 3
 
         # Task 1: first 10 bins have 1 element each
@@ -269,8 +297,16 @@ using RadiK:
         k_values_gpu = adapt(backend, Int32[5, 7, 8])
         task_lens_gpu = KA.zeros(backend, Int32, num_tasks)
 
-        select_bin!(bin_ids_gpu, k_values_gpu, task_lens_gpu, histogram_gpu;
-            largest=true, threads_per_block=256, warp_size=WARP_SIZE)
+        hist_len, num_tasks = size(histogram_gpu)
+        threads_per_block = 256
+        @assert hist_len % threads_per_block == 0
+        unroll = hist_len ÷ threads_per_block
+
+        kernel! = select_bin_kernel!(backend, threads_per_block)
+        kernel!(bin_ids_gpu, k_values_gpu, task_lens_gpu, histogram_gpu,
+            Val(true), Val(threads_per_block), Val(hist_len), Val(unroll), Val(WARP_SIZE);
+            ndrange=num_tasks * threads_per_block)
+        KA.synchronize(backend)
 
         bin_ids = Array(bin_ids_gpu)
         k_values = Array(k_values_gpu)
@@ -289,7 +325,7 @@ using RadiK:
         @test task_lens[3] == 3
     end
 
-    @testset "select_bin! - Edge cases" begin
+    @testset "select_bin_kernel! - Edge cases" begin
         # Test k=1 (first element)
         histogram = zeros(Int32, 256, 1)
         histogram[1, 1] = 5  # All 5 elements in bin 0
@@ -299,8 +335,16 @@ using RadiK:
         k_values_gpu = adapt(backend, Int32[3])
         task_lens_gpu = KA.zeros(backend, Int32, 1)
 
-        select_bin!(bin_ids_gpu, k_values_gpu, task_lens_gpu, histogram_gpu;
-            largest=true, threads_per_block=256, warp_size=WARP_SIZE)
+        hist_len, num_tasks = size(histogram_gpu)
+        threads_per_block = 256
+        @assert hist_len % threads_per_block == 0
+        unroll = hist_len ÷ threads_per_block
+
+        kernel! = select_bin_kernel!(backend, threads_per_block)
+        kernel!(bin_ids_gpu, k_values_gpu, task_lens_gpu, histogram_gpu,
+            Val(true), Val(threads_per_block), Val(hist_len), Val(unroll), Val(WARP_SIZE);
+            ndrange=num_tasks * threads_per_block)
+        KA.synchronize(backend)
 
         @test Array(bin_ids_gpu)[1] == 1
         @test Array(k_values_gpu)[1] == 3

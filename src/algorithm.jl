@@ -8,7 +8,7 @@ using KernelIntrinsics: get_warpsize, device
 const MAX_GRID_SIZE = 65535
 
 """
-    RadiKWorkspace(backend, n, num_tasks, [T=Int], [ValT=Float32])
+    RadiKWorkspace(backend, n, num_tasks, [I=Int32])
 
 Temporary workspace buffers for radix-based top-k selection.
 
@@ -20,13 +20,16 @@ expected stride, then reuse for any call with `max(task_lens) ≤ n`.
 - `backend`: KernelAbstractions backend (CUDABackend, MetalBackend, etc.)
 - `n`: Maximum stride (longest task length this workspace can handle)
 - `num_tasks`: Number of tasks (1 for single-task, >1 for multi-task batch)
-- `T`: (Optional) Index type for buffers (default: Int)
-- `ValT`: (Optional) Value type for buffers (default: Float32)
+- `I`: (Optional) Integer type for internal buffers (default: Int32, GPU-optimized)
+
+# Type Constraint
+**Currently only Float32 is supported**. The value buffers are hardcoded as Float32
+due to the 3-pass radix design optimized for IEEE 754 32-bit floating-point representation.
 
 # Fields
 - `histogram`: Histogram buffer (4096 bins × num_tasks)
-- `val_buffer_1`: First ping-pong value buffer (n × num_tasks)
-- `val_buffer_2`: Second ping-pong value buffer (n × num_tasks)
+- `val_buffer_1`: First ping-pong value buffer (n × num_tasks, Float32)
+- `val_buffer_2`: Second ping-pong value buffer (n × num_tasks, Float32)
 - `global_count`: Per-task global counters
 - `task_len_buffer_1`: First ping-pong task lengths buffer
 - `task_len_buffer_2`: Second ping-pong task lengths buffer
@@ -52,10 +55,10 @@ topk_radix_select!(data, result, Int32(100), ws, idx_in, idx_out, Int32[10000])
 - This allows reuse across calls with different task lengths (as long as max ≤ n)
 - For multi-task processing, `num_tasks` must match the number of tasks in each call
 """
-struct RadiKWorkspace{I, V}
+struct RadiKWorkspace{I}
     histogram::AbstractArray{I, 2}
-    val_buffer_1::AbstractArray{V, 2}
-    val_buffer_2::AbstractArray{V, 2}
+    val_buffer_1::AbstractArray{Float32, 2}
+    val_buffer_2::AbstractArray{Float32, 2}
     global_count::AbstractArray{I}
     task_len_buffer_1::AbstractArray{I}
     task_len_buffer_2::AbstractArray{I}
@@ -63,15 +66,15 @@ struct RadiKWorkspace{I, V}
     bin_ids::AbstractArray{I}
 end
 
-function RadiKWorkspace(backend, n, num_tasks, ::Type{T}=Int, ::Type{ValT}=Float32) where {T, ValT}
-    histogram = KA.zeros(backend, T, 4096, num_tasks)
-    val_buffer_1 = KA.zeros(backend, ValT, n, num_tasks)
-    val_buffer_2 = KA.zeros(backend, ValT, n, num_tasks)
-    global_count = KA.zeros(backend, T, num_tasks)
-    task_len_buffer_1 = KA.zeros(backend, T, num_tasks)
-    task_len_buffer_2 = KA.zeros(backend, T, num_tasks)
-    k_values = KA.zeros(backend, T, num_tasks)
-    bin_ids = KA.zeros(backend, T, num_tasks)
+function RadiKWorkspace(backend, n, num_tasks, ::Type{I}=Int32) where {I}
+    histogram = KA.zeros(backend, I, 4096, num_tasks)
+    val_buffer_1 = KA.zeros(backend, Float32, n, num_tasks)
+    val_buffer_2 = KA.zeros(backend, Float32, n, num_tasks)
+    global_count = KA.zeros(backend, I, num_tasks)
+    task_len_buffer_1 = KA.zeros(backend, I, num_tasks)
+    task_len_buffer_2 = KA.zeros(backend, I, num_tasks)
+    k_values = KA.zeros(backend, I, num_tasks)
+    bin_ids = KA.zeros(backend, I, num_tasks)
 
     return RadiKWorkspace(
         histogram, val_buffer_1, val_buffer_2, global_count,
@@ -97,8 +100,15 @@ Main entry point for radix-based top-k selection.
 - `ws`: Pre-allocated RadiKWorkspace for memory reuse (mutated)
 - `val_in`: Input data array (AbstractArray{Float32})
 - `idx_in`: Input indices array (for index tracking)
-- `task_lens`: Task lengths for multi-task batch processing
-- `k`: Number of top elements to select (Int32)
+- `task_lens`: Task lengths for multi-task batch processing (Integer type)
+- `k`: Number of top elements to select (Integer type)
+
+# Type Parameters
+- `I`: Workspace integer type (default: Int32, GPU-optimized)
+- `IdxT`: Index array type (can be different from workspace type)
+
+# Type Constraints
+- Value arrays must be `Float32` (algorithm is optimized for IEEE 754 32-bit floating-point)
 
 # Returns
 - `val_out`: Array containing top-k elements (sorted)
@@ -111,8 +121,8 @@ data = CUDA.randn(Float32, 10000)
 result = CUDA.zeros(Float32, 100)
 idx_in = CUDA.zeros(Int32, 10000)
 idx_out = CUDA.zeros(Int32, 100)
-ws = RadiKWorkspace(CUDABackend(), 10000, 1)
-topk_radix_select!(result, idx_out, ws, data, idx_in, Int32[10000], Int32(100))
+ws = RadiKWorkspace(CUDABackend(), 10000, 1)  # Int32 by default
+topk_radix_select!(result, idx_out, ws, data, idx_in, [10000], 100)  # k auto-converted to Int32
 
 # Single task with workspace reuse (avoid allocation overhead)
 ws = RadiKWorkspace(CUDABackend(), 10000, 1)
@@ -122,7 +132,7 @@ idx_out = CUDA.zeros(Int32, 100)
 
 for i in 1:100
     data = CUDA.randn(Float32, 10000)
-    topk_radix_select!(result, idx_out, ws, data, idx_in, Int32[10000], Int32(100))
+    topk_radix_select!(result, idx_out, ws, data, idx_in, [10000], 100)
 end
 
 # Multi-task processing with workspace reuse
@@ -131,8 +141,13 @@ data = CUDA.randn(Float32, 10000)
 result = CUDA.zeros(Float32, 100, 4)
 idx_in = CUDA.collect(Int32(1):Int32(10000))
 idx_out = CUDA.zeros(Int32, 100, 4)
-topk_radix_select!(result, idx_out, ws, data, idx_in, Int32.[5000, 6000, 4000, 5500], Int32(100))
+topk_radix_select!(result, idx_out, ws, data, idx_in, [5000, 6000, 4000, 5500], 100)
 ```
+
+# Type Conversion
+- `k` and `task_lens` are automatically converted to the workspace's integer type
+- Default workspace uses Int32 for optimal GPU performance and memory efficiency
+- For Int64 support (large datasets >2B elements), use: `RadiKWorkspace(backend, n, num_tasks, Int64)`
 
 # Workspace Reuse
 When reusing a workspace across calls:
@@ -141,26 +156,25 @@ When reusing a workspace across calls:
 - Different `k` values are allowed across calls
 """
 function topk_radix_select!(
-    val_out::AbstractArray{ValT},
+    val_out::AbstractArray{Float32},
     idx_out::AbstractArray{IdxT},
-    ws::RadiKWorkspace,
-    val_in::AbstractArray{ValT},
+    ws::RadiKWorkspace{I},
+    val_in::AbstractArray{Float32},
     idx_in::AbstractArray{IdxT},
-    task_lens::AbstractVector{T},
-    k::Int32,
+    task_lens::AbstractVector{<:Integer},
+    k::Integer,
     ::Val{LARGEST}=Val(true),
     ::Val{ASCEND}=Val(true),
     ::Val{WITHSCALE}=Val(false),
     ::Val{WITHIDXIN}=Val(false),
     ::Val{WITHPACKING}=Val(true)
-) where {ValT, IdxT, LARGEST, ASCEND, WITHSCALE, WITHIDXIN, WITHPACKING, T}
+) where {IdxT, I, LARGEST, ASCEND, WITHSCALE, WITHIDXIN, WITHPACKING}
 
     backend = get_backend(val_in)
     WARP_SIZE = get_warpsize(device(backend))
 
     if WITHPACKING
-        @assert sizeof(ValT) <= 16 "radix topk: requires sizeof(ValT) <= 16 for with_packing=true, got $(sizeof(ValT))"
-        pack_size = 16 ÷ sizeof(ValT)
+        pack_size = 16 ÷ sizeof(Float32)  # = 4 for Float32
     else
         pack_size = 1
     end
@@ -168,7 +182,7 @@ function topk_radix_select!(
     # ========================================================================
     # Buffer reset
     # ========================================================================
-    ws.k_values .= k
+    ws.k_values .= I(k)
 
     # ========================================================================
     # Workspace setup
@@ -183,8 +197,8 @@ function topk_radix_select!(
     bin_ids = ws.bin_ids
 
     num_tasks = length(task_lens)
-    stride = T(max(task_lens..., length(task_lens)))
-    task_offsets = adapt(backend, vcat(zero(T), accumulate(+, task_lens)))
+    stride = I(max(task_lens..., num_tasks))
+    task_offsets = adapt(backend, I.(vcat(0, accumulate(+, task_lens))))
 
     # Ping-pong flag: tracks which buffer was last written to (1 = val_buffer_2, 0 = val_buffer_1)
     flag = 1
@@ -304,13 +318,13 @@ function topk_radix_select!(
         end
         filter_kernel!(backend, 256)(
             val_out, idx_out, global_count, k_values, val_in, idx_in,
-            kth_element, task_offsets, stride, k,
+            kth_element, task_offsets, k,
             Val(0), Val(20), Val(256), Val(pack_size), Val(cache_size), Val(WITHSCALE), Val(LARGEST), Val(WITHIDXIN),
             ndrange=(grid_size_x * 256, grid_size_y))
     else
         filter_general_kernel!(backend, 256)(
             val_out, idx_out, global_count, k_values, val_in, idx_in,
-            kth_element, task_offsets, stride, k,
+            kth_element, task_offsets, k,
             Val(0), Val(20), Val(256), Val(pack_size), Val(WITHSCALE), Val(LARGEST), Val(WITHIDXIN),
             ndrange=(grid_size_x * 256, grid_size_y))
     end
@@ -349,48 +363,139 @@ function topk_radix_select!(
 end
 
 """
-    topk(data::AbstractArray{ValT}, k::Int, [::Type{IxT}=Int32]; largest=true, rev=false)
+    topk(data, k; indices=nothing, largest=true, rev=false)
+    topk(data, task_lens, k; indices=nothing, largest=true, rev=false)
+    topk!(val_out, idx_out, data, k; indices=nothing, largest=true, rev=false)
+    topk!(val_out, idx_out, data, task_lens, k; indices=nothing, largest=true, rev=false)
 
-Convenience wrapper that allocates output array, indices, and workspace.
+Top-k selection on GPU arrays.
 
-Allocates the result array, indices array, and workspace, then calls `topk_radix_select!`.
-Use this for simple single-task top-k operations where you don't need to reuse buffers.
+Two variants:
+- **`topk`**: Non-mutating, allocates output arrays automatically
+- **`topk!`**: Mutating, writes to pre-allocated output arrays
+
+Two modes:
+- **Single-task**: Process one array
+- **Batch**: Process multiple tasks (provide `task_lens` vector)
 
 # Arguments
-- `data`: Input data array (AbstractArray{Float32})
+- `data`: Input data array (Float32, GPU-backed)
 - `k`: Number of top elements to select
-- `IxT`: (Optional) Index type (default: Int32)
+- `val_out`: (For `topk!`) Pre-allocated output array for values (mutated)
+- `idx_out`: (For `topk!`) Pre-allocated output array for indices (mutated)
+- `task_lens`: (Optional) For batch mode, number of elements per task [num_tasks] (use `[n]` for single task)
+- `indices`: (Optional) Custom input indices array (default: automatic sequential indices)
 - `largest`: Find largest (true) or smallest (false) elements (default: true)
 - `rev`: Sort output in descending (true) or ascending (false) order (default: false)
 
 # Returns
-- `result`: Array containing top-k elements (sorted)
-- `indices`: Array containing indices of top-k elements
+- **`topk`**: Tuple `(values, indices)` - allocated arrays
+  - Single-task: shape `(k,)`
+  - Batch: shape `(k, num_tasks)`
+- **`topk!`**: Nothing (mutates `val_out` and `idx_out`)
 
-# Example
+# Examples
+
+Simple usage (automatic allocation):
+```julia
+using RadiK, CUDA, Adapt
+
+backend = CUDABackend()
+data = adapt(backend, randn(Float32, 1_000_000))
+values, indices = topk(data, 100; largest=true)
 ```
-using RadiK, CUDA
 
-data = CUDA.randn(Float32, 1_000_000)
-values, indices = topk(data, 100; largest=true, rev=false)
+Batch processing:
+```julia
+using RadiK, CUDA, Adapt
+
+backend = CUDABackend()
+data = adapt(backend, randn(Float32, 10_000))
+task_lens = [3000, 4000, 3000]
+values, indices = topk(data, task_lens, 100)
+# Returns: (values::Matrix{Float32}, indices::Matrix{Int32}), both (100, 3)
 ```
 
-# Notes
-- For repeated calls or multi-task processing, use `topk_radix_select!` directly
-  with a pre-allocated `RadiKWorkspace` for better performance
+Mutating (pre-allocated outputs):
+```julia
+using RadiK, CUDA, KernelAbstractions as KA, Adapt
+
+backend = CUDABackend()
+val_out = KA.zeros(backend, Float32, 100, 1000)
+idx_out = KA.zeros(backend, Int32, 100, 1000)
+data = adapt(backend, randn(Float32, 1_000_000))
+task_lens = repeat([1000], 1000)
+topk!(val_out, idx_out, data, task_lens, 100)
+```
+
+# Type Constraints
+- `data` must be `Float32` (algorithm is optimized for IEEE 754 32-bit floating-point)
+- `data` must be on a GPU backend (CUDA, ROCm, Metal, etc.)
+
+# Performance Notes
+- **`topk`**: Allocates all GPU buffers on each call (simpler, slower for repeated calls)
+- **`topk!`**: Reuses pre-allocated outputs
+- **`topk_radix_select!`**: Maximum control, reuses workspace and outputs
+
+# See Also
+- `topk_radix_select!`: Lower-level API with workspace reuse
+- `RadiKWorkspace`: Pre-allocated workspace for repeated operations
 """
-function topk(data::AbstractArray{ValT}, k, ::Type{IxT}=Int32; largest=true, rev=false) where {ValT, IxT}
+function topk!(
+    val_out::AbstractArray{Float32, 2},
+    idx_out::AbstractArray{IdxT, 2},
+    data::AbstractArray{Float32},
+    task_lens::AbstractVector{<:Integer},
+    k::Integer;
+    indices::Union{Nothing, AbstractArray{IdxT}}=nothing,
+    largest=true,
+    rev=false
+) where IdxT
     backend = get_backend(data)
-    n = length(data)
+    num_tasks = length(task_lens)
+    max_task_len = maximum(task_lens)
+    ws = RadiKWorkspace(backend, Int(max_task_len), num_tasks)
 
-    # Allocate workspace (n is the data length, which is the stride for single-task)
-    ws = RadiKWorkspace(backend, n, 1, IxT, ValT)
-
-    # Allocate output
-    result = KA.zeros(backend, ValT, k)
-    indices = KA.zeros(backend, IxT, k)
+    # Handle input indices
+    if indices === nothing
+        indices = KA.zeros(backend, Int32, 0)
+    end
 
     # Call main algorithm
-    topk_radix_select!(result, indices, ws, data, indices, IxT[n], IxT(k), Val(largest), Val(!rev), Val(false), Val(false), Val(true))
-    return result, indices
+    topk_radix_select!(
+        val_out, idx_out, ws, data, indices, task_lens, k,
+        Val(largest), Val(!rev), Val(false), Val(indices !== nothing && !isempty(indices)), Val(true)
+    )
+end
+
+function topk!(val_out, idx_out, data, k; indices=nothing, largest=true, rev=false)
+    topk!(val_out, idx_out, data, [length(data)], k, indices=indices, largest=largest, rev=rev)
+end
+
+function topk(
+    data::AbstractArray{Float32},
+    task_lens::AbstractVector{<:Integer},
+    k::Integer;
+    indices::Union{Nothing, AbstractArray}=nothing,
+    largest=true,
+    rev=false
+)
+
+    # Allocate output (2D: k x num_tasks)
+    backend = get_backend(data)
+    num_tasks = length(task_lens)
+    val_out = KA.zeros(backend, Float32, k, num_tasks)
+    
+    # Determine index type from indices array, or default to Int32
+    idx_type = indices === nothing ? Int32 : eltype(indices)
+    idx_out = KA.zeros(backend, idx_type, k, num_tasks)
+
+    topk!(val_out, idx_out, data, task_lens, k, indices=indices, largest=largest, rev=rev)
+
+    return val_out, idx_out
+end
+
+function topk(data, k; indices=nothing, largest=true, rev=false)
+    val_out, idx_out = topk(data, [length(data)], k; indices=indices, largest=largest, rev=rev)
+    return val_out[:, 1], idx_out[:, 1]
 end
