@@ -148,4 +148,16 @@ Random.seed!(42)
             offset += task_lens[task_id]
         end
     end
+
+    @testset "Error messages and validation" begin
+        # Test dimension validation in topk!
+        data = adapt(backend, randn(Float32, 1000))
+        val_out_wrong = KA.zeros(backend, Float32, 50, 1)  # Wrong size
+        idx_out_wrong = KA.zeros(backend, Int32, 50, 1)
+        @test_throws ErrorException topk!(val_out_wrong, idx_out_wrong, data, [1000], 100)
+
+        # Test indices length validation
+        indices_wrong = adapt(backend, collect(Int32(1):Int32(500)))  # Wrong length
+        @test_throws ErrorException topk(data, 100; indices=indices_wrong)
+    end
 end

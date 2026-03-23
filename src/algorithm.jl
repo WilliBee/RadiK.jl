@@ -482,7 +482,27 @@ function topk!(
     backend = get_backend(data)
     num_tasks = length(task_lens)
     max_task_len = maximum(task_lens)
+
+    # Validate input data type
+    eltype(data) == Float32 || error(
+        "RadiK.jl only supports Float32 input data. " *
+        "Got $(eltype(data)). Convert with: adapt(backend, Float32.(your_data))")
+
+    # Validate output dimensions
+    expected_size = (k, num_tasks)
+    size(val_out) == expected_size || error(
+        "val_out must have size $expected_size, got $(size(val_out))")
+    size(idx_out) == expected_size || error(
+        "idx_out must have size $expected_size, got $(size(idx_out))")
+
     ws = RadiKWorkspace(backend, Int(max_task_len), num_tasks)
+
+    # Validate indices if provided
+    if indices !== nothing && !isempty(indices)
+        length(indices) == length(data) || error(
+            "indices length must equal data length. " *
+            "Got $(length(indices)) vs $(length(data))")
+    end
 
     # Handle input indices
     if indices === nothing
@@ -508,6 +528,11 @@ function topk(
     largest=true,
     rev=false
 )
+
+    # Validate input data type
+    eltype(data) == Float32 || error(
+        "RadiK.jl only supports Float32 input data. " *
+        "Got $(eltype(data)). Convert with: adapt(backend, Float32.(your_data))")
 
     # Allocate output (2D: k x num_tasks)
     backend = get_backend(data)
