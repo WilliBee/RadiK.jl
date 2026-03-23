@@ -16,8 +16,9 @@ Adapted from original CUDA C++ [RadiK](https://github.com/leefige/radik/) implem
 
 ```julia
 using Pkg
-Pkg.add(url="https://github.com/WilliBee/BitonicSort.jl")   # not yet registered
-Pkg.add(url="https://github.com/WilliBee/RadiK.jl")         # not yet registered
+Pkg.add(url="https://github.com/WilliBee/KernelIntrinsics.jl")  # fork awaiting PR
+Pkg.add(url="https://github.com/WilliBee/BitonicSort.jl")       # not yet registered
+Pkg.add(url="https://github.com/WilliBee/RadiK.jl")             # not yet registered
 ```
 
 ### Backend Requirements
@@ -38,11 +39,17 @@ Pkg.add("CUDA")
 ### Single Task (Basic)
 
 ```julia
+using Adapt
+using KernelAbstractions
+import KernelAbstractions as KA
 using RadiK
+
+# Select backend
 using CUDA  # or Metal, AMDGPU, oneAPI
+backend = CUDABackend()  # or MetalBackend(), etc.
 
 # Create GPU data
-data = CUDA.randn(Float32, 1_000_000)
+data = adapt(backend, randn(Float32, 1_000_000))
 
 # Find top 100 largest elements (sorted descending)
 values, indices = topk(data, 100; largest=true, rev=false)
@@ -53,47 +60,60 @@ values, indices = topk(data, 100; largest=true, rev=false)
 ### Workspace Reuse (High Performance)
 
 ```julia
+using Adapt
+using KernelAbstractions
+import KernelAbstractions as KA
 using RadiK
-using CUDA
+using Random
+
+# Select backend
+using CUDA  # or Metal, AMDGPU, oneAPI
+backend = CUDABackend()  # or MetalBackend(), etc.
 
 k = 100
 n = 10_000_000
 
-# Pre-allocate workspace (can be reused!)
-ws = RadiKWorkspace(CUDABackend(), n, 1)
-result = CUDA.zeros(Float32, k)
-idx_in = CUDA.zeros(Int32, n)
-idx_out = CUDA.zeros(Int32, k)
-data = CUDA.randn(Float32, n)
+# Pre-allocate workspace
+ws = RadiKWorkspace(backend, n, 1, Int32, Float32)
+result = KA.zeros(backend, Float32, k)
+idx_in = KA.zeros(backend, Int32, n)
+idx_out = KA.zeros(backend, Int32, k)
+data = adapt(backend, randn(Float32, n))
 
-# Reuse workspace for multiple calls - zero allocation overhead
-for i in 1:100
+# Reuse workspace for multiple calls
+for i in 1:5
     rand!(data)
-    topk_radix_select!(result, idx_out, ws, data, idx_in, Int32[n], k)
-    # Workspace and buffers reused automatically
+    topk_radix_select!(result, idx_out, ws, data, idx_in, Int32[n], Int32(k))
 end
 ```
 
 ### Multi-Task Batch Processing
 
 ```julia
+using Adapt
+using KernelAbstractions
+import KernelAbstractions as KA
 using RadiK
-using CUDA
+using Random
+
+# Select backend
+using CUDA  # or Metal, AMDGPU, oneAPI
+backend = CUDABackend()  # or MetalBackend(), etc.
 
 # 4 independent tasks with different sizes
 task_lens = [1000, 2000, 1500, 500]
 total_len = sum(task_lens)
 
 # Concatenated input data
-data = CUDA.randn(Float32, total_len)
-indices = CUDA.collect(Int32(1):Int32(total_len))
+data = adapt(backend, randn(Float32, total_len))
+indices = adapt(backend, collect(Int32(1):Int32(total_len)))
 
 # Pre-allocate workspace (max stride = 2000, 4 tasks)
-ws = RadiKWorkspace(CUDABackend(), 2000, 4)
+ws = RadiKWorkspace(backend, 2000, 4, Int32, Float32)
 
 # Pre-allocate outputs (2D: k × num_tasks)
-result = CUDA.zeros(Float32, 64, 4)
-indices_out = CUDA.zeros(Int32, 64, 4)
+result = KA.zeros(backend, Float32, 64, 4)
+indices_out = KA.zeros(backend, Int32, 64, 4)
 
 # Find top-64 for all 4 tasks in one call
 result, indices_out = topk_radix_select!(
