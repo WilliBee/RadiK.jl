@@ -58,6 +58,41 @@ data = adapt(backend, randn(Float32, 1_000_000))
 values, indices = topk(data, 100; largest=true, rev=false)
 ```
 
+### Find Smallest Elements
+
+```julia
+using RadiK, CUDA, Adapt
+
+backend = CUDABackend()
+data = adapt(backend, randn(Float32, 1_000_000))
+
+# Find bottom 100 smallest elements
+values, indices = topk(data, 100; largest=false)
+```
+
+### Control Sort Order
+
+```julia
+# Largest values, sorted ascending (1st is smallest of top-k)
+values, indices = topk(data, 100; largest=true, rev=false)
+
+# Smallest values, sorted descending (1st is largest of bottom-k)
+values, indices = topk(data, 100; largest=false, rev=true)
+```
+
+### Custom Indices
+
+```julia
+using RadiK, CUDA, Adapt
+
+backend = CUDABackend()
+data = adapt(backend, randn(Float32, 1_000_000))
+
+# Track original positions from a larger dataset
+indices_array = adapt(backend, Int32[1000, 1001, 1002, 1003, 1004])
+values, idxs = topk(data, 100; indices=indices_array)
+```
+
 ### Batch Processing
 
 ```julia

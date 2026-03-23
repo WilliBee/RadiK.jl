@@ -396,7 +396,7 @@ Two modes:
 
 # Examples
 
-Simple usage (automatic allocation):
+## Basic usage - find largest elements
 ```julia
 using RadiK, CUDA, Adapt
 
@@ -405,7 +405,35 @@ data = adapt(backend, randn(Float32, 1_000_000))
 values, indices = topk(data, 100; largest=true)
 ```
 
-Batch processing:
+## Find smallest elements
+```julia
+values, indices = topk(data, 100; largest=false)
+```
+
+## Control sort order
+```julia
+# Largest values, sorted ascending (1st value is smallest of top-k)
+values, indices = topk(data, 100; largest=true, rev=false)
+
+# Smallest values, sorted descending (1st value is largest of bottom-k)
+values, indices = topk(data, 100; largest=false, rev=true)
+```
+
+## Custom indices - track original positions
+```julia
+# Your custom indexing (e.g., global dataset indices)
+data = adapt(backend, Float32[1000, 1001, 1002, 1003, 1004])
+indices_array = adapt(backend, Int32[1000, 1001, 1002, 1003, 1004])
+values, idxs = topk(data, 2; indices=indices_array)
+```
+
+## Single task using batch API explicitly
+```julia
+# Explicit single-task with batch function
+values, indices = topk(data, [length(data)], 100)
+```
+
+## Batch processing - multiple datasets in one call
 ```julia
 using RadiK, CUDA, Adapt
 
@@ -416,7 +444,7 @@ values, indices = topk(data, task_lens, 100)
 # Returns: (values::Matrix{Float32}, indices::Matrix{Int32}), both (100, 3)
 ```
 
-Mutating (pre-allocated outputs):
+## Mutating (pre-allocated outputs)
 ```julia
 using RadiK, CUDA, KernelAbstractions as KA, Adapt
 
