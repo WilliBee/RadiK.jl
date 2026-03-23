@@ -16,7 +16,7 @@ Adapted from original CUDA C++ [RadiK](https://github.com/leefige/radik/) implem
 
 ```julia
 using Pkg
-Pkg.add(url="https://github.com/WilliBee/BitonicSort.jll")  # not yet registered
+Pkg.add(url="https://github.com/WilliBee/BitonicSort.jl")   # not yet registered
 Pkg.add(url="https://github.com/WilliBee/RadiK.jl")         # not yet registered
 ```
 
@@ -195,17 +195,11 @@ topk_radix_select!(data2, result2, Int32(64), ws, idx2_in, idx2_out, Int32[2500,
 
 ### Benchmark Results (single-task)
 
-**Running benchmarks :**
-```bash
-cd benchmarks
-BACKEND=cuda julia --project=. radik_single_task_benchmark.jl
-```
-
-
+Benchmarks are maintained in a separate repository: [https://github.com/WilliBee/RadiKBenchmarks](https://github.com/WilliBee/RadiKBenchmarks). To run benchmarks, see instructions in the repo's README.
 
 #### Original C++ benchmark
 
-We run the benchmark compiled directly from the orginal [RadiK](https://github.com/leefige/radik/) repo in Google Colab using `benchmarks/radiK_paper_benchmark.ipynb` :
+We run the benchmark compiled directly from the orginal [RadiK](https://github.com/leefige/radik/) repo in Google Colab using [RadiKBenchmarks/radiK_paper_benchmark.ipynb](https://github.com/WilliBee/RadiKBenchmarks/blob/main/radiK_paper_benchmark.ipynb) :
 Running on Google Colab with T4 GPU :
 
 ```
@@ -224,6 +218,8 @@ Timings are slightly slower than reported in the paper, likely due to overhead.
 
 #### Julia RadiK.jl
 
+Benchmark script: [RadiKBenchmarks/radik_single_task_benchmark.jl](https://github.com/WilliBee/RadiKBenchmarks/blob/main/radik_single_task_benchmark.jl)
+
 Running on Google Colab with T4 GPU :
 
 ```
@@ -241,7 +237,7 @@ Timings RadiK.jl (Burst / Steady in milliseconds):
 
 ### Other Benchmark Results (multi-task, other backends)
 
-See `bencharmarks/README.md`
+See [RadiKBenchmarks/README.md](https://github.com/WilliBee/RadiKBenchmarks/blob/main/README.md)
 
 ## TODO
 

@@ -3,8 +3,6 @@ uuid = "c173e4ef-a5d8-447f-8df0-20ebc266f2f3"
 version = "0.1.0"
 authors = ["William BENG <github.com/WilliBee> and contributors"]
 
-[workspace]
-projects = ["benchmarks"]
 
 [deps]
 AcceleratedKernels = "6a4ca0a5-0e36-4168-a932-d9be78d558f1"
@@ -19,8 +17,8 @@ CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 Metal = "dde4c033-4e86-420c-a63e-0dd931031962"
 
 [sources]
-KernelIntrinsics = {url = "https://github.com/WilliBee/KernelIntrinsics.jl.git"}
-BitonicSort = {url = "https://github.com/WilliBee/BitonicSort.jl.git"}
+KernelIntrinsics = {url = "https://github.com/WilliBee/KernelIntrinsics.jl"}
+BitonicSort = {url = "https://github.com/WilliBee/BitonicSort.jl"}
 
 [compat]
 Adapt = "4.4.0"
