@@ -12,6 +12,14 @@ Adapted from original CUDA C++ [RadiK](https://github.com/leefige/radik/) implem
 - **Vectorized memory loads**: Generates vload instructions for optimal throughput
 - **GPU batched bitonic sort**: For K ≤ 4096, falls back to AcceleratedKernels for larger K
 
+> **⚠️ Important Type Constraint**
+>
+> RadiK.jl currently only supports `Float32` input data. The algorithm is specifically optimized for IEEE 754 32-bit floating-point operations. If you have data in other types (e.g., `Float64`, `Float16`), you must convert it to `Float32` before use:
+>
+> ```julia
+> data = adapt(backend, Float32.(your_data))
+> ```
+
 ## Installation
 
 ```julia
@@ -36,148 +44,135 @@ Pkg.add("CUDA")
 
 ## Quick Start
 
-### Single Task (Basic)
+### Simple Usage (Automatic Allocation)
 
 ```julia
-using Adapt
-using KernelAbstractions
-import KernelAbstractions as KA
-using RadiK
+using RadiK, CUDA, Adapt
 
-# Select backend
-using CUDA  # or Metal, AMDGPU, oneAPI
-backend = CUDABackend()  # or MetalBackend(), etc.
+backend = CUDABackend()
 
 # Create GPU data
 data = adapt(backend, randn(Float32, 1_000_000))
 
 # Find top 100 largest elements (sorted descending)
 values, indices = topk(data, 100; largest=true, rev=false)
-
-# Result: values contains top-100 elements, indices track positions
 ```
 
-### Workspace Reuse (High Performance)
+### Batch Processing
 
 ```julia
-using Adapt
-using KernelAbstractions
-import KernelAbstractions as KA
-using RadiK
-using Random
+using RadiK, CUDA, Adapt
 
-# Select backend
-using CUDA  # or Metal, AMDGPU, oneAPI
-backend = CUDABackend()  # or MetalBackend(), etc.
+backend = CUDABackend()
 
-k = 100
-n = 10_000_000
+# Concatenated data with 3 tasks
+data = adapt(backend, randn(Float32, 10_000))
+task_lens = [3000, 4000, 3000]
 
-# Pre-allocate workspace
-ws = RadiKWorkspace(backend, n, 1, Int32, Float32)
-result = KA.zeros(backend, Float32, k)
-idx_in = KA.zeros(backend, Int32, n)
-idx_out = KA.zeros(backend, Int32, k)
-data = adapt(backend, randn(Float32, n))
-
-# Reuse workspace for multiple calls
-for i in 1:5
-    rand!(data)
-    topk_radix_select!(result, idx_out, ws, data, idx_in, Int32[n], Int32(k))
-end
+# Find top-100 for all tasks
+values, indices = topk(data, task_lens, 100)
+# Returns: values (100×3 Matrix), indices (100×3 Matrix)
 ```
 
-### Multi-Task Batch Processing
+### Mutating Pre-allocated Outputs
 
 ```julia
-using Adapt
-using KernelAbstractions
-import KernelAbstractions as KA
-using RadiK
-using Random
+using RadiK, CUDA, KernelAbstractions as KA, Adapt
 
-# Select backend
-using CUDA  # or Metal, AMDGPU, oneAPI
-backend = CUDABackend()  # or MetalBackend(), etc.
+backend = CUDABackend()
 
-# 4 independent tasks with different sizes
-task_lens = [1000, 2000, 1500, 500]
-total_len = sum(task_lens)
+# Pre-allocate outputs for 1000 iterations
+val_out = KA.zeros(backend, Float32, 100, 1000)
+idx_out = KA.zeros(backend, Int32, 100, 1000)
+data = adapt(backend, randn(Float32, 1_000_000))
+task_lens = repeat([1000], 1000)
+topk!(val_out, idx_out, data, task_lens, 100)
+```
 
-# Concatenated input data
-data = adapt(backend, randn(Float32, total_len))
-indices = adapt(backend, collect(Int32(1):Int32(total_len)))
+### Maximum Performance (Workspace Reuse)
 
-# Pre-allocate workspace (max stride = 2000, 4 tasks)
-ws = RadiKWorkspace(backend, 2000, 4, Int32, Float32)
+```julia
+using RadiK, CUDA, KernelAbstractions as KA, Adapt
 
-# Pre-allocate outputs (2D: k × num_tasks)
-result = KA.zeros(backend, Float32, 64, 4)
-indices_out = KA.zeros(backend, Int32, 64, 4)
+backend = CUDABackend()
 
-# Find top-64 for all 4 tasks in one call
-result, indices_out = topk_radix_select!(
-    result, indices_out, ws,
-    data, indices, Int32.(task_lens), Int32(64)
-)
+# Pre-allocate workspace for repeated calls
+ws = RadiKWorkspace(backend, 10_000, 1)
 
-# Each task's results are in result[:, task_id]
+val_out = KA.zeros(backend, Float32, 100)
+idx_out = KA.zeros(backend, Int32, 100)
+data = adapt(backend, randn(Float32, 10_000))
+
+# Reuse workspace
+topk_radix_select!(val_out, idx_out, ws, data, KA.zeros(backend, Int32, 0), [10_000], 100)
 ```
 
 ## API Reference
 
-### RadiK.topk
+### RadiK.topk / topk!
 
-```
-topk(data, k; largest=true, rev=false)
+**Non-mutating API:**
+```julia
+topk(data, k; indices=nothing, largest=true, rev=false)
+topk(data, task_lens, k; indices=nothing, largest=true, rev=false)
 ```
 
-Convenience wrapper that allocates all necessary buffers.
+Allocates output arrays automatically.
+
+**Mutating API:**
+```julia
+topk!(val_out, idx_out, data, k; indices=nothing, largest=true, rev=false)
+topk!(val_out, idx_out, data, task_lens, k; indices=nothing, largest=true, rev=false)
+```
+
+Writes to pre-allocated output arrays.
 
 **Arguments:**
-- `data::AbstractArray{Float32}`: Input data array (any BackendArray)
-- `k::Integer`: Number of top elements to return
-- `largest::Bool=true`: Find largest (true) or smallest (false) elements
-- `rev::Bool=false`: Sort output in descending (true) or ascending (false) order
+- `data::AbstractArray{Float32}`: Input data array
+- `k::Integer`: Number of top elements to select
+- `task_lens::AbstractVector{<:Integer}`: For batch mode, elements per task (use `[n]` for single task)
+- `val_out::AbstractArray`: Pre-allocated output array (mutated)
+- `idx_out::AbstractArray`: Pre-allocated output array (mutated)
+- `indices::Union{Nothing, AbstractArray}`: Custom input indices (default: nothing for automatic)
+- `largest::Bool=true`: Find largest (true) or smallest (false)
+- `rev::Bool=false`: Sort output descending (true) or ascending (false)
 
 **Returns:**
-- `values::AbstractArray{Float32}`: Top-k values (length k)
-- `indices::AbstractArray{Int32}`: Original positions of top-k values
-
-**Example:**
-```julia
-values, indices = topk(data, 100; largest=true, rev=false)
-```
+- `topk`: Tuple `(values, indices)` - allocated arrays
+- `topk!`: Nothing (mutates outputs in-place)
 
 ### RadiK.topk_radix_select!
 
-```
-topk_radix_select!(val_in, val_out, k, ws, idx_in, idx_out, task_lens, [::Val{LARGEST}=Val(true)], [::Val{ASCEND}=Val(true)], [::Val{WITHSCALE}=Val(false)], [::Val{WITHIDXIN}=Val(false)], [::Val{WITHPACKING}=Val(true)])
+Low-level API with maximum control over pre-allocated workspace and outputs.
+
+```julia
+topk_radix_select!(val_out, idx_out, ws, data, indices, task_lens, k;
+    ::Val{LARGEST}=Val(true), ::Val{ASCEND}=Val(true),
+    ::Val{WITHSCALE}=Val(false), ::Val{WITHPACKING}=Val(true))
 ```
 
-Find top-k elements using radix-based selection (full control, pre-allocated).
-
-**Positional Arguments:**
-- `val_in::AbstractArray{Float32}`: Input data array (any BackendArray)
+**Arguments:**
 - `val_out::AbstractArray{Float32}`: Pre-allocated output array [k, num_tasks]
-- `k::Int32`: Number of top elements to select
-- `ws::RadiKWorkspace`: Pre-allocated workspace for memory reuse
-- `idx_in::AbstractArray{Int32}`: Input indices array (for index tracking)
-- `idx_out::AbstractArray{Int32}`: Pre-allocated output indices [k, num_tasks]
-- `task_lens::AbstractVector{Int32}`: Length of each task
-
-**Compile-time Parameters (via Val{}):**
-- `Val{LARGEST}=Val(true)`: Find largest (true) or smallest (false)
-- `Val{ASCEND}=Val(true)`: Sort output ascending (true) or descending (false)
-- `Val{WITHSCALE}=Val(false)`: Enable value scaling for numerical stability
-- `Val{WITHIDXIN}=Val(false)`: Whether input indices are provided
-- `Val{WITHPACKING}=Val(true)`: Use vectorized loads (recommended)
-
-**Returns:**
-- `val_out::AbstractArray{Float32}`: Top-k values (modified in-place)
-- `idx_out::AbstractArray{Int32}`: Top-k indices (modified in-place)
+- `idx_out::AbstractArray{IdxT}`: Pre-allocated output indices [k, num_tasks]
+- `ws::RadiKWorkspace`: Pre-allocated workspace
+- `data::AbstractArray{Float32}`: Input data array
+- `indices::AbstractArray{IdxT}`: Input indices array
+- `task_lens::AbstractVector{I}`: Task lengths (for single task, use `[n]` where `n` is the task length) 
+- `k::Integer`: Number of top elements
 
 ### RadiK.RadiKWorkspace
+
+Pre-allocated workspace for zero workspace re-allocation repeated calls.
+
+```julia
+RadiKWorkspace(backend, n, num_tasks, ::Type{I}=Int32)
+```
+
+**Arguments:**
+- `backend`: KernelAbstractions backend
+- `n::Integer`: Maximum stride (longest task length)
+- `num_tasks::Integer`: Number of tasks
+- `I::Type=Int32`: Integer type for buffers
 
 ```
 RadiKWorkspace(backend, n, num_tasks, [T=Int], [ValT=Float32])
