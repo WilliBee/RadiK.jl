@@ -291,9 +291,8 @@ See [RadiKBenchmarks/README.md](https://github.com/WilliBee/RadiKBenchmarks/blob
 
 ## TODO
 
-- [ ] Test and support additional datatypes (Float16, Float64, Int16, Int64, etc.)
-- [ ] Explore precompilation for faster first-call performance
-- [ ] Add multi-backend testing to CI/CD pipeline
+- [ ] Explore precompilation for faster first-call performance (https://github.com/JuliaLang/julia/pull/60747 might be helping ?)
+- ?
 
 ## Testing
 
