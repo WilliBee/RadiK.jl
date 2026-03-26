@@ -1,6 +1,6 @@
 name = "RadiK"
 uuid = "c173e4ef-a5d8-447f-8df0-20ebc266f2f3"
-version = "0.1.2"
+version = "0.1.3"
 authors = ["William BENG <github.com/WilliBee> and contributors"]
 
 
@@ -17,13 +17,13 @@ CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 Metal = "dde4c033-4e86-420c-a63e-0dd931031962"
 
 [sources]
-KernelIntrinsics = {url = "https://github.com/WilliBee/KernelIntrinsics.jl"}
 BitonicSort = {url = "https://github.com/WilliBee/BitonicSort.jl"}
+KernelIntrinsics = {url = "https://github.com/WilliBee/KernelIntrinsics.jl"}
 
 [compat]
 Adapt = "4.4.0"
 Atomix = "1.1.2"
-BitonicSort = "0.1.1"
+BitonicSort = "0.2.2"
 CUDA = "5.9.6"
 KernelIntrinsics = "0.1.5"
 PrettyTables = "3.2.3"

@@ -335,7 +335,7 @@ function topk_radix_select!(
     bitonic_task_offsets = vcat([0], accumulate(+, fill(k, num_tasks)))
 
     if k <= 4096
-        bitonic_sort!(val_out, idx_out, ascend=ASCEND, task_offsets=bitonic_task_offsets)
+        bitonic_sort!(val_out, idx_out, rev=!ASCEND, task_offsets=bitonic_task_offsets)
     else
         for task_id in 1:num_tasks
             AcceleratedKernels.merge_sort_by_key!(
