@@ -93,6 +93,10 @@ Main entry point for radix-based top-k selection.
 - `Val{WITHSCALE}`: Enable value scaling for numerical stability
 - `Val{WITHIDXIN}`: Whether input indices are provided
 - `Val{WITHPACKING}`: Whether to use vectorized loads (compile-time)
+- `Val{VLOAD_SIZE_BYTES}`: Vectorized load width in bytes (default: 32)
+  - Controls the byte width for vectorized memory operations (PACKSIZE = VLOAD_SIZE_BYTES ÷ sizeof(Float32))
+  - Recommended values: 32 (PACKSIZE=8, optimal), 16 (PACKSIZE=4)
+  - **Metal limitation**: Maximum value is 32 bytes due to 32KB shared memory limit.
 
 # Arguments
 - `val_out`: Output array for top-k results (mutated)
@@ -167,14 +171,15 @@ function topk_radix_select!(
     ::Val{ASCEND}=Val(true),
     ::Val{WITHSCALE}=Val(false),
     ::Val{WITHIDXIN}=Val(false),
-    ::Val{WITHPACKING}=Val(true)
-) where {IdxT, I, LARGEST, ASCEND, WITHSCALE, WITHIDXIN, WITHPACKING}
+    ::Val{WITHPACKING}=Val(true),
+    ::Val{VLOAD_SIZE_BYTES}=Val(32)
+) where {IdxT, I, LARGEST, ASCEND, WITHSCALE, WITHIDXIN, WITHPACKING, VLOAD_SIZE_BYTES}
 
     backend = get_backend(val_in)
     WARP_SIZE = get_warpsize(device(backend))
 
     if WITHPACKING
-        pack_size = 16 ÷ sizeof(Float32)  # = 4 for Float32
+        pack_size = VLOAD_SIZE_BYTES ÷ sizeof(Float32)
     else
         pack_size = 1
     end

@@ -183,7 +183,8 @@ Low-level API with maximum control over pre-allocated workspace and outputs.
 ```julia
 topk_radix_select!(val_out, idx_out, ws, data, indices, task_lens, k;
     ::Val{LARGEST}=Val(true), ::Val{ASCEND}=Val(true),
-    ::Val{WITHSCALE}=Val(false), ::Val{WITHPACKING}=Val(true))
+    ::Val{WITHSCALE}=Val(false), ::Val{WITHPACKING}=Val(true),
+    ::Val{VLOAD_SIZE_BYTES}=Val(32))
 ```
 
 **Arguments:**
@@ -192,8 +193,19 @@ topk_radix_select!(val_out, idx_out, ws, data, indices, task_lens, k;
 - `ws::RadiKWorkspace`: Pre-allocated workspace
 - `data::AbstractArray{Float32}`: Input data array
 - `indices::AbstractArray{IdxT}`: Input indices array
-- `task_lens::AbstractVector{I}`: Task lengths (for single task, use `[n]` where `n` is the task length) 
+- `task_lens::AbstractVector{I}`: Task lengths (for single task, use `[n]` where `n` is the task length)
 - `k::Integer`: Number of top elements
+
+**Compile-Time Parameters:**
+- `Val{LARGEST}`: Find largest (true) or smallest (false) elements
+- `Val{ASCEND}`: Sort output in ascending (true) or descending (false) order
+- `Val{WITHSCALE}`: Enable value scaling for numerical stability
+- `Val{WITHPACKING}`: Whether to use vectorized loads (default: true)
+- `Val{VLOAD_SIZE_BYTES}`: Vectorized load width in bytes (default: 32)
+  - Controls memory vectorization: `PACKSIZE = VLOAD_SIZE_BYTES ÷ sizeof(Float32)`
+  - **Recommended**: 32 bytes (PACKSIZE=8) - optimal for both CUDA and Metal
+  - **CUDA**: Can use 64 bytes (PACKSIZE=16) for potentially better performance
+  - **Metal**: Maximum is 32 bytes - larger values will fail due to 32KB shared memory limit
 
 ### RadiK.RadiKWorkspace
 
@@ -239,7 +251,7 @@ topk_radix_select!(data2, result2, Int32(64), ws, idx2_in, idx2_out, Int32[2500,
 
 ### Design Characteristics
 - **3-pass radix filtering**: Reduces search space exponentially (1/4096 → 1/256 → 1/16)
-- **Vectorized loads**: Uses 4-wide loads for optimal memory bandwidth
+- **Configurable vectorized loads**: Default 8-wide (32-byte) loads for optimal memory bandwidth across GPU backends
 - **Batch efficient**: Multi-task processing amortizes kernel launch overhead
 - **Consistent performance**: Independent of data distribution (radix-based)
 
