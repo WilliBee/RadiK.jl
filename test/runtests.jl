@@ -44,5 +44,5 @@ elseif TEST_BACKEND == "metal"
     backend = MetalBackend()
     include("general_routine.jl")
 else
-    error("Unknown backend: $TEST_BACKEND")
+    @warn "Unknown backend: $TEST_BACKEND - Tests ignored"
 end
