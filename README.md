@@ -1,5 +1,6 @@
 # RadiK.jl
 
+[![Build Status](https://github.com/WilliBee/RadiK.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/WilliBee/RadiK.jl/actions/workflows/CI.yml?query=branch%3Amain)
 [![Aqua QA](https://juliatesting.github.io/Aqua.jl/dev/assets/badge.svg)](https://github.com/JuliaTesting/Aqua.jl)
 
 A backend-agnostic GPU top-k selection library for Julia implementing radix-based filtering with efficient batch processing.
