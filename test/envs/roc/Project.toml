@@ -1,0 +1,6 @@
+[deps]
+AMDGPU = "21141c5a-9bdb-4563-92ae-f87d6854732e"
+RadiK = "c173e4ef-a5d8-447f-8df0-20ebc266f2f3"
+
+[sources]
+RadiK = {path = "../../.."}

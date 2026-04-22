@@ -1,0 +1,6 @@
+[deps]
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+RadiK = "c173e4ef-a5d8-447f-8df0-20ebc266f2f3"
+
+[sources]
+RadiK = {path = "../../.."}

@@ -1,5 +1,7 @@
 # RadiK.jl
 
+[![Aqua QA](https://juliatesting.github.io/Aqua.jl/dev/assets/badge.svg)](https://github.com/JuliaTesting/Aqua.jl)
+
 A backend-agnostic GPU top-k selection library for Julia implementing radix-based filtering with efficient batch processing.
 
 Adapted from original CUDA C++ [RadiK](https://github.com/leefige/radik/) implementation described in the paper ["RadiK: Scalable and Optimized GPU-Parallel Radix Top-K Selection"](https://arxiv.org/abs/2501.14336).
