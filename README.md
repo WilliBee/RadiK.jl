@@ -13,7 +13,7 @@ Adapted from original CUDA C++ [RadiK](https://github.com/leefige/radik/) implem
 - **3-pass radix filtering**: Efficiently reduces search space using sequential radix scan
 - **Batch processing**: Find top-k from multiple independent datasets in single kernel launches
 - **Vectorized memory loads**: Generates vload instructions for optimal throughput
-- **GPU batched bitonic sort**: For K ≤ 4096, falls back to AcceleratedKernels for larger K
+- **GPU batched bitonic sort** for K ≤ 4096; falls back to `AcceleratedKernels.jl` for larger K
 
 > **⚠️ Important Type Constraint**
 >
