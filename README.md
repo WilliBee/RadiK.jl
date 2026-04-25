@@ -27,9 +27,7 @@ Adapted from original CUDA C++ [RadiK](https://github.com/leefige/radik/) implem
 
 ```julia
 using Pkg
-Pkg.add(url="https://github.com/WilliBee/KernelIntrinsics.jl")  # fork awaiting PR
-Pkg.add(url="https://github.com/WilliBee/BitonicSort.jl")       # not yet registered
-Pkg.add(url="https://github.com/WilliBee/RadiK.jl")             # not yet registered
+Pkg.add("RadiK")
 ```
 
 ### Backend Requirements
